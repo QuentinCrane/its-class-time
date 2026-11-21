@@ -34,20 +34,30 @@
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 已决定与尚需在实现中验证的边界 |
 | [docs/REFERENCES.md](docs/REFERENCES.md) | Apple/Microsoft/GitHub 官方文档链接 |
 | [AGENTS.md](AGENTS.md) | 供 Codex/AI 编码助手遵守的约束 |
-| [assets/prototype/ClassTime-Concept-v1.png](assets/prototype/ClassTime-Concept-v1.png) | 完整产品原型参考图 |
+| [assets/prototype/ClassTime桌面作息设计总览.png](assets/prototype/ClassTime桌面作息设计总览.png) | 完整产品原型参考图 |
 | [shared/schemas/schedule.schema.json](shared/schemas/schedule.schema.json) | 作息 JSON Schema（示例层） |
 | `shared/presets/*.json` | 高中、大学可编辑初始样例 |
 | `shared/test-cases/time-engine.json` | 平台通用时间引擎测试向量 |
 
-![已确认的概念原型](assets/prototype/ClassTime-Concept-v1.png)
+![已确认的概念原型](assets/prototype/ClassTime桌面作息设计总览.png)
 
 > **图为视觉概念**，并非操作系统截图；图中时间、日期、字体、菜单、系统通知样式和 UI 排布均非逐像素实现承诺。系统通知必须调用 OS 官方接口，不能自己仿制通知窗口。
 
 ## 4. 本地启动开发（推荐）
 
-1. **Windows**：在 Visual Studio（含 C++ 桌面开发、WinUI/Windows App SDK 工具）新建 **C++/WinRT WinUI 3 Desktop Packaged** 项目到 `windows/`，先做系统托盘、悬浮 HWND、即时通知三个技术验证。
-2. **macOS**：在 Xcode 新建 SwiftUI macOS App 到 `macos/`，用 AppKit 管理菜单栏/悬浮面板，先做原生通知、常驻和悬浮窗口技术验证。
-3. 两端各自读取 `shared/presets/` 示例，并运行 `shared/test-cases/` 同样的时间语义测试。
-4. 原型验收通过后，再开展两种视图、今日调整、模板编辑和发布包装。
+### Windows（本轮已落地源码）
 
-**仓库暂时不提供假装可运行的 `.slnx`、`.xcodeproj` 或 CI 配置。** 先由 IDE 生成真实项目；通过技术验证之后，再写可实际执行的两条 Actions 工作流。具体顺序见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+- 工程：`windows/ClassTime.sln`（C++/WinRT + WinUI 3 + Win32，单项目 MSIX）。
+- 作息引擎：纯 C++17，已通过 `shared/test-cases/time-engine.json` 全部向量（125 项检查）。
+- 详细构建步骤、当前验证边界与手工验收清单见 [windows/README.md](windows/README.md)。
+- **诚实说明**：当前开发机没有可用的 MSBuild（被安全策略禁止启动），因此 XAML 标记编译、MSIX 打包和实机运行尚未验证；不能据此宣称“Windows 端已完成”。
+
+### macOS（尚未开始）
+
+1. 在 Xcode 新建 SwiftUI macOS App 到 `macos/`，用 AppKit 管理菜单栏/悬浮面板。
+2. 先验证原生通知、关闭设置后常驻、悬浮面板不抢焦点。
+3. 接入 `shared/presets/` 与同一套时间语义测试，再进入界面实现。
+
+两端都应读取 `shared/presets/` 示例，并运行 `shared/test-cases/` 同样的时间语义测试；原型验收通过后，再开展两种视图、今日调整、模板编辑和发布包装。
+
+**Windows 工程已按真实 VS2022 模板建立，但本机不能完成 XAML/打包验证；`macos/` 仍只有占位。** 在加入 CI 之前，先在本机完成真实构建与安装测试，再写可实际执行的 Actions 工作流。具体顺序见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。

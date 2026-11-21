@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hpp;hxx</Extensions>
+    </Filter>
+    <Filter Include="App">
+      <UniqueIdentifier>{1E9B7D2C-3A44-4B7E-9E6A-2B5C8D1F0A31}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine">
+      <UniqueIdentifier>{2F8C6D3E-4B55-4C8F-AF7B-3C6D9E2A1B42}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Assets">
+      <UniqueIdentifier>{3A9D7E4F-5C66-4D90-B08C-4D7EAF3B2C53}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="pch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="App.xaml.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MainWindow.xaml.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="app\boundary_monitor.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="app\notification_service.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="app\overlay_window.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="app\services.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="app\tray_icon.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\src\config.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\src\edit_ops.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\src\json.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\src\schedule.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\src\time_engine.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="pch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="App.xaml.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="MainWindow.xaml.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="app\boundary_monitor.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="app\notification_service.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="app\overlay_window.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="app\services.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="app\tray_icon.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\include\classtime\config.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\include\classtime\edit_ops.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\include\classtime\json.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\include\classtime\schedule.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\include\classtime\time_engine.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Midl Include="MainWindow.idl">
+      <Filter>Source Files</Filter>
+    </Midl>
+    <ApplicationDefinition Include="App.xaml">
+      <Filter>Source Files</Filter>
+    </ApplicationDefinition>
+    <Page Include="MainWindow.xaml">
+      <Filter>Source Files</Filter>
+    </Page>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="Assets\ClassTime.ico">
+      <Filter>Assets</Filter>
+    </Image>
+    <Image Include="Assets\Square44x44Logo.png">
+      <Filter>Assets</Filter>
+    </Image>
+    <Image Include="Assets\Square150x150Logo.png">
+      <Filter>Assets</Filter>
+    </Image>
+    <Image Include="Assets\StoreLogo.png">
+      <Filter>Assets</Filter>
+    </Image>
+    <Image Include="Assets\Wide310x150Logo.png">
+      <Filter>Assets</Filter>
+    </Image>
+    <Image Include="Assets\SplashScreen.png">
+      <Filter>Assets</Filter>
+    </Image>
+  </ItemGroup>
+</Project>

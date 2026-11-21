@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="ClassTime.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:ClassTime">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <Color x:Key="ClassTimeFocusColor">#4F6BED</Color>
+            <Color x:Key="ClassTimeFocusSoftColor">#8FA4F5</Color>
+            <Color x:Key="ClassTimeRestColor">#3FA796</Color>
+            <Color x:Key="ClassTimeLunchColor">#E0A458</Color>
+            <SolidColorBrush x:Key="ClassTimeFocusBrush" Color="{StaticResource ClassTimeFocusColor}" />
+            <SolidColorBrush x:Key="ClassTimeRestBrush" Color="{StaticResource ClassTimeRestColor}" />
+            <SolidColorBrush x:Key="ClassTimeLunchBrush" Color="{StaticResource ClassTimeLunchColor}" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

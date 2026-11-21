@@ -70,6 +70,9 @@ EditOutcome ApplyEdit(const std::vector<Segment>& base, const EditRequest& reque
   if (request.label.has_value()) {
     edited.label = *request.label;
   }
+  if (request.kind.has_value()) {
+    edited.kind = *request.kind;
+  }
   if (request.start.has_value()) {
     edited.start = *request.start;
   }

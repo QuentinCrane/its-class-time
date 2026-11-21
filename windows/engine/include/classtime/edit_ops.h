@@ -18,6 +18,7 @@ struct EditRequest {
   std::optional<TimeOfDay> end;
   std::optional<int> durationMinutes;  // 优先于 end：end = start + duration
   std::optional<std::string> label;
+  std::optional<SegmentKind> kind;
   ShiftStrategy strategy = ShiftStrategy::Shift;
 };
 

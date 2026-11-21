@@ -2,6 +2,9 @@
 
 > 每个阶段都要在 macOS 和 Windows 两端完成对应验证；如其中一端暂无法测试，应明示“未验证”，不能称“全平台完成”。
 
+> **Windows 进度备注（2026-11-21）**：`windows/` 已按 M0–M2 范围落地 C++/WinRT + WinUI 3 源码，作息引擎通过全部共享测试向量；当前开发机无法启动 MSBuild，XAML 编译、MSIX 打包与实机运行仍未验证，故以下复选框暂不勾选。详见 `windows/README.md`。
+
+
 ## M0：原生技术可行性验证
 
 - [ ] macOS SwiftUI/AppKit 工程能运行，关闭设置仍常驻菜单栏。
