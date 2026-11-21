@@ -1,0 +1,17 @@
+# 构建产物
+windows/build/
+windows/packages/
+windows/Generated Files/
+windows/bin/
+windows/obj/
+*.user
+*.suo
+.vs/
+*.pdb
+*.ilk
+*.obj
+*.tlog
+
+# 系统
+Thumbs.db
+.DS_Store

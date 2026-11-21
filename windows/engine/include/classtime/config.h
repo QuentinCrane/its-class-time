@@ -1,0 +1,87 @@
+// 用户配置、预设解析、今日覆盖与运行态去重数据。
+#pragma once
+
+#include <map>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "classtime/schedule.h"
+
+namespace classtime {
+
+struct PresentationSettings {
+  enum class View { Bar, Ring };
+  enum class Scope { AllDay, CurrentBlock };
+  enum class Edge { Top, Bottom };
+
+  View view = View::Bar;
+  Scope scope = Scope::AllDay;
+  Edge edge = Edge::Bottom;
+  bool visible = true;
+  std::string monitorId;  // 显示器设备名；空表示主屏
+  int offsetX = 0;        // 相对工作区左侧像素
+  int offsetY = 12;       // 距离贴边像素
+};
+
+struct NotificationSettings {
+  bool enabled = true;
+  bool muted = false;
+  bool focusBoundaries = true;
+  bool restBoundaries = true;
+  bool lunchBoundaries = true;
+};
+
+struct DailyOverride {
+  std::vector<Segment> segments;
+};
+
+struct AppConfig {
+  int schemaVersion = 1;
+  int revision = 1;  // 每次保存递增，参与通知去重键
+  std::string selectedTemplateId = "high-school";
+  std::vector<Schedule> templates;
+  std::map<std::string, DailyOverride> dailyOverrides;  // YYYY-MM-DD
+  PresentationSettings presentation;
+  NotificationSettings notifications;
+  bool launchAtLogin = false;
+};
+
+// —— 预设 ——
+std::optional<Schedule> ParsePreset(std::string_view text, std::string* error);
+std::string SerializeSchedule(const Schedule& schedule, int indent = 2);
+
+// —— 配置 ——
+std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error);
+std::string SerializeConfig(const AppConfig& config);
+
+const Schedule* FindTemplate(const AppConfig& config, std::string_view id);
+Schedule* FindTemplateMutable(AppConfig& config, std::string_view id);
+const Schedule* SelectedTemplate(const AppConfig& config);
+
+// 今日覆盖优先；否则按星期取常规模板；无安排返回空。
+std::vector<Segment> EffectiveSegments(const AppConfig& config, const WallClock& now,
+                                       bool* fromOverride = nullptr);
+
+bool HasOverride(const AppConfig& config, const std::string& dateKey);
+void SetOverride(AppConfig& config, const std::string& dateKey, std::vector<Segment> segments);
+void RemoveOverride(AppConfig& config, const std::string& dateKey);
+
+// 清理早于 keepFromDate 的覆盖，避免无限增长。
+void PruneOverrides(AppConfig& config, const std::string& keepFromDate);
+
+void BumpRevision(AppConfig& config);
+
+// —— 运行态（通知去重）——
+struct RuntimeState {
+  std::vector<std::string> firedKeys;  // 最近触发过的边界键
+  std::string lastActiveDate;
+};
+
+std::string SerializeRuntimeState(const RuntimeState& state);
+RuntimeState ParseRuntimeState(std::string_view text);
+bool HasFired(const RuntimeState& state, const std::string& key);
+void MarkFired(RuntimeState& state, const std::string& key, size_t cap = 64);
+
+}  // namespace classtime
