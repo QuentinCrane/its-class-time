@@ -23,11 +23,14 @@
     <ClCompile Include="pch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="App.xaml.cpp">
+    <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="MainWindow.xaml.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="app\desktop_app.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="app\settings_window.cpp">
+      <Filter>App</Filter>
     </ClCompile>
     <ClCompile Include="app\boundary_monitor.cpp">
       <Filter>App</Filter>
@@ -67,11 +70,11 @@
     <ClInclude Include="resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="App.xaml.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="app\desktop_app.h">
+      <Filter>App</Filter>
     </ClInclude>
-    <ClInclude Include="MainWindow.xaml.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="app\settings_window.h">
+      <Filter>App</Filter>
     </ClInclude>
     <ClInclude Include="app\boundary_monitor.h">
       <Filter>App</Filter>
@@ -103,17 +106,6 @@
     <ClInclude Include="engine\include\classtime\time_engine.h">
       <Filter>Engine</Filter>
     </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <Midl Include="MainWindow.idl">
-      <Filter>Source Files</Filter>
-    </Midl>
-    <ApplicationDefinition Include="App.xaml">
-      <Filter>Source Files</Filter>
-    </ApplicationDefinition>
-    <Page Include="MainWindow.xaml">
-      <Filter>Source Files</Filter>
-    </Page>
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\ClassTime.ico">

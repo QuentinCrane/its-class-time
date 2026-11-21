@@ -83,7 +83,21 @@ void Services::Initialize() {
   std::lock_guard<std::mutex> guard(mutex_);
   if (initialized_) return;
 
-  dataDir_ = std::filesystem::path(ApplicationData::Current().LocalFolder().Path().c_str());
+  // 允许用环境变量指定独立数据目录（技术预览用，避免污染正式配置）。
+  wchar_t customDir[MAX_PATH]{};
+  if (GetEnvironmentVariableW(L"CLASSTIME_DATA_DIR", customDir, MAX_PATH) > 0) {
+    dataDir_ = std::filesystem::path(customDir);
+  } else {
+    // 打包运行时使用 LocalState；解包运行时回退到 %LOCALAPPDATA%。
+    try {
+      dataDir_ = std::filesystem::path(ApplicationData::Current().LocalFolder().Path().c_str());
+    } catch (...) {
+      wchar_t buffer[MAX_PATH]{};
+      const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
+      dataDir_ = length > 0 ? std::filesystem::path(buffer) / L"ClassTime"
+                            : std::filesystem::temp_directory_path() / L"ClassTime";
+    }
+  }
   std::error_code ec;
   std::filesystem::create_directories(dataDir_, ec);
 
@@ -126,7 +140,9 @@ void Services::LoadPresets(std::vector<classtime::Schedule>* out) {
     presetDir = std::filesystem::path(Package::Current().InstalledLocation().Path().c_str()) /
                 L"presets";
   } catch (...) {
-    presetDir = std::filesystem::current_path() / L"presets";
+    wchar_t exePath[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    presetDir = std::filesystem::path(exePath).parent_path() / L"presets";
   }
 
   for (const wchar_t* name : {L"high-school.json", L"university.json"}) {

@@ -2,6 +2,7 @@
 #include "overlay_window.h"
 #include "services.h"
 
+
 #include <winrt/Microsoft.UI.Interop.h>
 #include <winrt/Windows.UI.ViewManagement.h>
 
@@ -15,7 +16,7 @@ namespace ClassTimeApp {
 namespace {
 
 constexpr double kBarWidthDip = 780.0;
-constexpr double kBarHeightDip = 92.0;
+constexpr double kBarHeightDip = 100.0;
 constexpr double kRingWidthDip = 300.0;
 constexpr double kRingHeightDip = 330.0;
 constexpr double kSegmentAreaWidth = 748.0;
@@ -97,13 +98,10 @@ OverlayWindow::~OverlayWindow() {
 
 void OverlayWindow::CreateNativeWindow() {
   window_ = Window();
-  window_.Title(L"“上课”时间到！");
-  window_.ExtendsContentIntoTitleBar(true);
+  window_.Title(L"ClassTime Overlay");
 
-  root_ = Grid();
-  root_.Background(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)));
-  window_.Content(root_);
-
+  // 关键顺序：先配置无边框 presenter，再挂内容并激活，
+  // 避免 SetBorderAndTitleBar 重建 HWND 时把已挂载的 XAML 岛拆掉。
   auto appWindow = window_.AppWindow();
   if (auto presenter = appWindow.Presenter().try_as<Microsoft::UI::Windowing::OverlappedPresenter>()) {
     presenter.SetBorderAndTitleBar(false, false);
@@ -111,6 +109,15 @@ void OverlayWindow::CreateNativeWindow() {
     presenter.IsMaximizable(false);
     presenter.IsMinimizable(false);
   }
+
+  root_ = Grid();
+  root_.Background(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)));
+  window_.Content(root_);
+
+  BuildBar();
+  BuildRing();
+
+  window_.Activate();
 
   hwnd_ = reinterpret_cast<HWND>(winrt::Microsoft::UI::GetWindowFromWindowId(appWindow.Id()));
   if (hwnd_ != nullptr) {
@@ -120,8 +127,6 @@ void OverlayWindow::CreateNativeWindow() {
     DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
   }
 
-  BuildBar();
-  BuildRing();
   created_ = true;
   ApplyPresentation();
 }
@@ -291,7 +296,9 @@ void OverlayWindow::BuildRing() {
   stack.Children().Append(ringDots_);
 
   card.Child(stack);
-  root_.Children().Append(card);
+  ringRoot_ = Grid();
+  ringRoot_.Children().Append(card);
+  root_.Children().Append(ringRoot_);
   ringRoot_.Visibility(Visibility::Collapsed);
 }
 
@@ -370,6 +377,7 @@ void OverlayWindow::ShowOverlay() {
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
   StartTimer();
   ApplyState();
+
 }
 
 void OverlayWindow::HideOverlay() {
