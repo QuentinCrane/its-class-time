@@ -36,7 +36,7 @@ bool TrayIcon::Create(HINSTANCE instance, CommandHandler handler) {
   data_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
   data_.uCallbackMessage = kCallbackMessage;
   data_.hIcon = icon_;
-  wcscpy_s(data_.szTip, tooltip_.c_str());
+  wcsncpy_s(data_.szTip, tooltip_.c_str(), _TRUNCATE);
   AddIcon();
   return true;
 }
@@ -72,7 +72,7 @@ void TrayIcon::Update(const std::wstring& tooltip, bool overlayVisible, bool rin
   allDayScope_ = allDayScope;
   muted_ = muted;
   if (!added_) return;
-  wcscpy_s(data_.szTip, tooltip_.c_str());
+  wcsncpy_s(data_.szTip, tooltip_.c_str(), _TRUNCATE);
   Shell_NotifyIconW(NIM_MODIFY, &data_);
 }
 

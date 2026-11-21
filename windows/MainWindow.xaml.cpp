@@ -355,9 +355,10 @@ void MainWindow::AddSegment_Click(IInspectable const&, RoutedEventArgs const&) {
 void MainWindow::RestorePreset_Click(IInspectable const&, RoutedEventArgs const&) {
   std::string error;
   if (!ClassTimeApp::Services::Instance().RestorePreset(&error)) {
-    EditorError().Message(hstring(ToWide(error)));
-    EditorError().IsOpen(true);
+    TemplateStatusText().Text(hstring(L"恢复失败：" + ToWide(error)));
+    return;
   }
+  RefreshAll();
 }
 
 void MainWindow::ClearOverride_Click(IInspectable const&, RoutedEventArgs const&) {

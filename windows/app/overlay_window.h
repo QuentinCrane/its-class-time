@@ -10,6 +10,8 @@ class OverlayWindow {
   ~OverlayWindow();
 
   void ApplyState();
+  // 重新读取显示设置（视图/范围/贴边），必要时重建分节并重新定位。
+  void ApplyPresentation();
   void ShowOverlay();
   void HideOverlay();
   void Close();
@@ -20,11 +22,9 @@ class OverlayWindow {
   void CreateNativeWindow();
   void BuildBar();
   void BuildRing();
-  void ApplyPresentation();
   void RefreshBar();
   void RefreshRing();
   void LayoutWindow();
-  void UpdateTooltip(size_t index);
   void StartTimer();
   void StopTimer();
 

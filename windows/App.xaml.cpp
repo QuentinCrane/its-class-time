@@ -58,6 +58,7 @@ void App::InitializeServices() {
   tray_->Create(GetModuleHandleW(nullptr), [this](UINT command) { HandleTrayCommand(command); });
 
   services.SetChangeCallback([this] {
+    if (monitor_) monitor_->RequestRefresh();
     auto dispatcher = dispatcher_;
     if (dispatcher == nullptr) return;
     dispatcher.TryEnqueue([this] { ApplyState(); });
@@ -75,10 +76,6 @@ void App::InitializeServices() {
   });
 
   ApplyState();
-
-  if (services.config().presentation.visible && overlay_) {
-    overlay_->ShowOverlay();
-  }
 }
 
 void App::ApplyState() {
@@ -112,7 +109,15 @@ void App::ApplyState() {
   }
 
   if (overlay_) {
-    overlay_->ApplyState();
+    if (config.presentation.visible) {
+      if (!overlay_->visible()) {
+        overlay_->ShowOverlay();
+      } else {
+        overlay_->ApplyPresentation();
+      }
+    } else if (overlay_->visible()) {
+      overlay_->HideOverlay();
+    }
   }
   if (settingsWindow_ != nullptr) {
     settingsWindow_.as<winrt::ClassTime::MainWindow>().ApplyState();
