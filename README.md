@@ -45,12 +45,17 @@
 
 ## 4. 本地启动开发（推荐）
 
-### Windows（本轮已落地源码）
+### Windows（本轮已落地源码并完成首轮实机验证）
 
-- 工程：`windows/ClassTime.sln`（C++/WinRT + WinUI 3 + Win32，单项目 MSIX）。
-- 作息引擎：纯 C++17，已通过 `shared/test-cases/time-engine.json` 全部向量（125 项检查）。
-- 详细构建步骤、当前验证边界与手工验收清单见 [windows/README.md](windows/README.md)。
-- **诚实说明**：当前开发机没有可用的 MSBuild（被安全策略禁止启动），因此 XAML 标记编译、MSIX 打包和实机运行尚未验证；不能据此宣称“Windows 端已完成”。
+- 工程：`windows/ClassTime.sln`（C++/WinRT + WinUI 3 + Win32，MSIX 工程配置保留）。
+- **应用为纯代码构建 WinUI 3**：不依赖 XAML 编译器；`DesktopApp` 实现
+  `IXamlMetadataProvider` 使 `XamlControlsResources` 正常加载（详见 windows/README.md §2）。
+- 本机没有 MSBuild（安全策略禁用 MSBuild.exe），使用 `windows/tools/build-unpackaged.cmd`
+  直接 `cl`/`link` 构建，产物 `windows/build/app/ClassTimeApp.exe`（解包运行）。
+- **已实机验证**：进程稳定常驻、托盘图标、悬浮层渲染（分节长条/圆环）、设置窗口
+  完整渲染（截图核对）；作息引擎 125 项共享测试向量全部通过。
+- **未验证**：系统通知实弹、睡眠唤醒场景、MSIX 打包/签名。
+- 详细构建步骤、验证边界与手工验收清单见 [windows/README.md](windows/README.md)。
 
 ### macOS（尚未开始）
 
@@ -60,4 +65,4 @@
 
 两端都应读取 `shared/presets/` 示例，并运行 `shared/test-cases/` 同样的时间语义测试；原型验收通过后，再开展两种视图、今日调整、模板编辑和发布包装。
 
-**Windows 工程已按真实 VS2022 模板建立，但本机不能完成 XAML/打包验证；`macos/` 仍只有占位。** 在加入 CI 之前，先在本机完成真实构建与安装测试，再写可实际执行的 Actions 工作流。具体顺序见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+**Windows 端已可解包实机运行（托盘/悬浮层/设置窗口已截图验证）；`macos/` 仍只有占位。** 在加入 CI 之前，先在本机完成真实构建与安装测试，再写可实际执行的 Actions 工作流。具体顺序见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
