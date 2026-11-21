@@ -1,0 +1,117 @@
+{
+  "description": "固定时区+固定日期；progress 为浮点，按 tolerance 1e-8 比较。测试用输入是本地 YYYY-MM-DDTHH:MM:SS；无夏令时的 Asia/Shanghai。",
+  "timezone": "Asia/Shanghai",
+  "date": "2026-11-23",
+  "template": "high-school",
+  "cases": [
+    {
+      "id": "before",
+      "now": "2026-11-23T07:59:59",
+      "currentSegmentId": null,
+      "state": "idle",
+      "nextBoundary": "2026-11-23T08:00:00"
+    },
+    {
+      "id": "start",
+      "now": "2026-11-23T08:00:00",
+      "currentSegmentId": "h1",
+      "state": "focus",
+      "focusOrdinal": 1,
+      "progress": 0.0,
+      "nextBoundary": "2026-11-23T08:45:00"
+    },
+    {
+      "id": "halfway",
+      "now": "2026-11-23T08:22:30",
+      "currentSegmentId": "h1",
+      "state": "focus",
+      "focusOrdinal": 1,
+      "progress": 0.5,
+      "nextBoundary": "2026-11-23T08:45:00"
+    },
+    {
+      "id": "boundary",
+      "now": "2026-11-23T08:45:00",
+      "currentSegmentId": "hb1",
+      "state": "break",
+      "progress": 0.0,
+      "nextBoundary": "2026-11-23T08:55:00"
+    },
+    {
+      "id": "break-half",
+      "now": "2026-11-23T08:50:00",
+      "currentSegmentId": "hb1",
+      "state": "break",
+      "progress": 0.5,
+      "nextBoundary": "2026-11-23T08:55:00"
+    },
+    {
+      "id": "third-lesson",
+      "now": "2026-11-23T10:02:00",
+      "currentSegmentId": "h3",
+      "state": "focus",
+      "focusOrdinal": 3,
+      "progress": 0.26666666666666666,
+      "nextBoundary": "2026-11-23T10:35:00"
+    },
+    {
+      "id": "lunch",
+      "now": "2026-11-23T12:00:00",
+      "currentSegmentId": "hl",
+      "state": "lunch",
+      "progress": 0.2,
+      "nextBoundary": "2026-11-23T14:00:00"
+    },
+    {
+      "id": "afternoon",
+      "now": "2026-11-23T14:00:00",
+      "currentSegmentId": "h5",
+      "state": "focus",
+      "focusOrdinal": 5,
+      "progress": 0.0,
+      "nextBoundary": "2026-11-23T14:45:00"
+    },
+    {
+      "id": "end-of-day",
+      "now": "2026-11-23T15:40:00",
+      "currentSegmentId": null,
+      "state": "idle",
+      "nextBoundary": null
+    }
+  ],
+  "editCases": [
+    {
+      "id": "lunch-shift",
+      "originalId": "hl",
+      "newEnd": "14:30",
+      "strategy": "shift",
+      "expected": {
+        "hl": {
+          "start": "11:30",
+          "end": "14:30"
+        },
+        "h5": {
+          "start": "14:30",
+          "end": "15:15"
+        },
+        "hb4": {
+          "start": "15:15",
+          "end": "15:25"
+        },
+        "h6": {
+          "start": "15:25",
+          "end": "16:10"
+        }
+      },
+      "valid": true
+    },
+    {
+      "id": "lunch-keep-collision",
+      "originalId": "hl",
+      "newEnd": "14:30",
+      "strategy": "keep",
+      "valid": false,
+      "reason": "overlap h5 starts 14:00"
+    }
+  ]
+}

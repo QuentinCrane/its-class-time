@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "university",
+  "name": "大学示例",
+  "activeWeekdays": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "segments": [
+    {
+      "id": "u1",
+      "kind": "focus",
+      "label": "上午第1大课",
+      "start": "08:00",
+      "end": "09:30"
+    },
+    {
+      "id": "ub1",
+      "kind": "break",
+      "label": "课间休息",
+      "start": "09:30",
+      "end": "09:50"
+    },
+    {
+      "id": "u2",
+      "kind": "focus",
+      "label": "上午第2大课",
+      "start": "09:50",
+      "end": "11:20"
+    },
+    {
+      "id": "ul",
+      "kind": "lunch",
+      "label": "午休",
+      "start": "11:20",
+      "end": "14:00"
+    },
+    {
+      "id": "u3",
+      "kind": "focus",
+      "label": "下午第1大课",
+      "start": "14:00",
+      "end": "15:30"
+    },
+    {
+      "id": "ub2",
+      "kind": "break",
+      "label": "课间休息",
+      "start": "15:30",
+      "end": "15:50"
+    },
+    {
+      "id": "u4",
+      "kind": "focus",
+      "label": "下午第2大课",
+      "start": "15:50",
+      "end": "17:20"
+    }
+  ]
+}

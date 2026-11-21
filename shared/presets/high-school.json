@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "high-school",
+  "name": "高中示例",
+  "activeWeekdays": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "segments": [
+    {
+      "id": "h1",
+      "kind": "focus",
+      "label": "第1节",
+      "start": "08:00",
+      "end": "08:45"
+    },
+    {
+      "id": "hb1",
+      "kind": "break",
+      "label": "课间休息",
+      "start": "08:45",
+      "end": "08:55"
+    },
+    {
+      "id": "h2",
+      "kind": "focus",
+      "label": "第2节",
+      "start": "08:55",
+      "end": "09:40"
+    },
+    {
+      "id": "hb2",
+      "kind": "break",
+      "label": "课间休息",
+      "start": "09:40",
+      "end": "09:50"
+    },
+    {
+      "id": "h3",
+      "kind": "focus",
+      "label": "第3节",
+      "start": "09:50",
+      "end": "10:35"
+    },
+    {
+      "id": "hb3",
+      "kind": "break",
+      "label": "课间休息",
+      "start": "10:35",
+      "end": "10:45"
+    },
+    {
+      "id": "h4",
+      "kind": "focus",
+      "label": "第4节",
+      "start": "10:45",
+      "end": "11:30"
+    },
+    {
+      "id": "hl",
+      "kind": "lunch",
+      "label": "午休",
+      "start": "11:30",
+      "end": "14:00"
+    },
+    {
+      "id": "h5",
+      "kind": "focus",
+      "label": "第5节",
+      "start": "14:00",
+      "end": "14:45"
+    },
+    {
+      "id": "hb4",
+      "kind": "break",
+      "label": "课间休息",
+      "start": "14:45",
+      "end": "14:55"
+    },
+    {
+      "id": "h6",
+      "kind": "focus",
+      "label": "第6节",
+      "start": "14:55",
+      "end": "15:40"
+    }
+  ]
+}
