@@ -56,6 +56,7 @@ class OverlayWindow {
   void ResetEdgeMotion();
   winrt::Microsoft::UI::Xaml::FrameworkElement EdgeContent() const;
   void UpdateVisibleLayer();
+  void RefreshEdgeHandle();
   void RefreshBar();
   void RefreshRing();
   void RefreshScreenEdge();
@@ -71,7 +72,9 @@ class OverlayWindow {
   winrt::Microsoft::UI::Xaml::Controls::Border barRoot_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid ringRoot_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Border edgeHandle_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::Border edgeGrip_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Border edgeTrack_{nullptr};
+  winrt::Microsoft::UI::Xaml::Shapes::Rectangle edgeFill_{nullptr};
+  winrt::Microsoft::UI::Xaml::Media::SolidColorBrush edgeFillBrush_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel segmentPanel_{nullptr};
   winrt::Microsoft::UI::Xaml::Shapes::Path ringArc_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::ArcSegment ringSweep_{nullptr};

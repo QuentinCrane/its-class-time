@@ -1791,16 +1791,24 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
     return;
   }
 
+  const bool ring = presentation.view == View::Ring;
+  const double segmentProgress = ring ? 0.605 : 0.46;
+  const auto segmentAccent = ring ? color(59, 132, 210) : accent;
   if (presentation.autoHideAtEdge && !previewHovered_) {
+    const auto gripTrack = color(202, 216, 231);
+    constexpr double gripLength = 39;
+    constexpr double gripOffset = (52 - gripLength) / 2;
     if (side) {
       const double x = dockLeft ? left + 3 : left + width - 12;
       const double y = top + height / 2 - 26;
       panel(x, y, 9, 52, CornerRadius{4.5, 4.5, 4.5, 4.5});
-      rect(x + 3, y + 16, 3, 20, accent, 1.5);
+      rect(x + 3, y + gripOffset, 3, gripLength, gripTrack, 1.5);
+      rect(x + 3, y + gripOffset, 3, gripLength * segmentProgress, segmentAccent, 1.5);
     } else {
       const double y = dockTop ? top : top + height - 9;
       panel(center - 26, y, 52, 9, CornerRadius{4.5, 4.5, 4.5, 4.5});
-      rect(center - 10, y + 3, 20, 3, accent, 1.5);
+      rect(center - gripLength / 2, y + 3, gripLength, 3, gripTrack, 1.5);
+      rect(center - gripLength / 2, y + 3, gripLength * segmentProgress, 3, segmentAccent, 1.5);
     }
     text(L"悬停展开", 12, face, 67);
     return;
@@ -1821,7 +1829,7 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
         const double y = innerTop + i * (segmentHeight + gap);
         rect(barX + 6, y, 9, segmentHeight, color(202, 221, 242), 4.5);
         if (i <= current) {
-          const double fill = i == current ? .46 : 1;
+          const double fill = i == current ? segmentProgress : 1;
           rect(barX + 6, y, 9, segmentHeight * fill, accent, 4.5);
         }
       }
@@ -1839,7 +1847,7 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
       rect(x, y + 8, segmentWidth, 5, color(202, 221, 242), 2.5);
       const int current = allDay ? 3 : 1;
       if (i <= current) {
-        rect(x, y + 8, segmentWidth * (i == current ? .46 : 1), 5, accent, 2.5);
+        rect(x, y + 8, segmentWidth * (i == current ? segmentProgress : 1), 5, accent, 2.5);
       }
     }
     return;
@@ -1874,13 +1882,15 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
   ArcSegment arc;
   arc.Size({radius, radius});
   arc.SweepDirection(SweepDirection::Clockwise);
-  arc.IsLargeArc(true);
-  arc.Point({static_cast<float>(cx) - 22.3f, y + 28.9f});
+  const double sweep = segmentProgress * 2 * 3.14159265358979323846;
+  arc.IsLargeArc(segmentProgress > 0.5);
+  arc.Point({static_cast<float>(cx + radius * std::sin(sweep)),
+             static_cast<float>(y - radius * std::cos(sweep))});
   figure.Segments().Append(arc);
   geometry.Figures().Append(figure);
   Shapes::Path progress;
   progress.Data(geometry);
-  progress.Stroke(color(59, 132, 210));
+  progress.Stroke(segmentAccent);
   progress.StrokeThickness(4);
   progress.StrokeStartLineCap(PenLineCap::Round);
   progress.StrokeEndLineCap(PenLineCap::Round);

@@ -38,6 +38,8 @@ constexpr double kDetailTrackWidth = 194.0;
 constexpr int kSnapInsetDip = 12;
 constexpr double kHandleWidthDip = 84;
 constexpr double kHandleHeightDip = 12;
+constexpr double kHandleTrackLengthDip = 64;
+constexpr double kHandleTrackThicknessDip = 4;
 
 struct Palette {
   Windows::UI::Color background;
@@ -290,14 +292,19 @@ void OverlayWindow::CreateNativeWindow() {
   edgeHandle_.CornerRadius({6, 6, 6, 6});
   edgeHandle_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 28)));
   edgeHandle_.BorderThickness(kSurfaceBorder);
-  edgeGrip_ = Border();
-  edgeGrip_.Width(34);
-  edgeGrip_.Height(3);
-  edgeGrip_.CornerRadius(CornerRadius{1.5, 1.5, 1.5, 1.5});
-  edgeGrip_.HorizontalAlignment(HorizontalAlignment::Center);
-  edgeGrip_.VerticalAlignment(VerticalAlignment::Center);
-  edgeGrip_.Background(SolidColorBrush(WithAlpha(palette.accent, 210)));
-  edgeHandle_.Child(edgeGrip_);
+  edgeTrack_ = Border();
+  const double trackRadius = kHandleTrackThicknessDip / 2;
+  edgeTrack_.CornerRadius({trackRadius, trackRadius, trackRadius, trackRadius});
+  edgeTrack_.HorizontalAlignment(HorizontalAlignment::Center);
+  edgeTrack_.VerticalAlignment(VerticalAlignment::Center);
+  edgeTrack_.Background(SolidColorBrush(WithAlpha(palette.foreground, 55)));
+  edgeFill_ = Shapes::Rectangle();
+  edgeFillBrush_ = SolidColorBrush(palette.accent);
+  edgeFill_.Fill(edgeFillBrush_);
+  edgeFill_.HorizontalAlignment(HorizontalAlignment::Left);
+  edgeFill_.VerticalAlignment(VerticalAlignment::Top);
+  edgeTrack_.Child(edgeFill_);
+  edgeHandle_.Child(edgeTrack_);
   edgeHandle_.Visibility(Visibility::Collapsed);
   root_.Children().Append(edgeHandle_);
   BindDrag();
@@ -1138,12 +1145,7 @@ void OverlayWindow::ApplyEdgeCollapsed(bool collapsed, bool fade) {
   }
   UpdateVisibleLayer();
   LayoutWindow();
-  if (collapsed) {
-    StopTimer();
-  } else {
-    StartTimer();
-    ApplyState();
-  }
+  ApplyState();
   if (edgeMotion_) edgeMotion_.Begin();
 }
 
@@ -1243,8 +1245,7 @@ void OverlayWindow::ApplyPresentation() {
       }
     }
     if (visible_) {
-      if (edgeCollapsed_ && view_ != View::ScreenEdge) StopTimer();
-      else StartTimer();
+      StartTimer();
       ApplyState();
     }
     return;
@@ -1364,8 +1365,8 @@ void OverlayWindow::ApplyLayoutStyle() {
   segmentPanel_.Orientation(side ? Orientation::Vertical : Orientation::Horizontal);
   barRoot_.Padding(side ? Thickness{0, kBarInsetDip, 0, kBarInsetDip}
                         : Thickness{kBarInsetDip, 0, kBarInsetDip, 0});
-  edgeGrip_.Width(side ? 3 : 34);
-  edgeGrip_.Height(side ? 34 : 3);
+  edgeTrack_.Width(side ? kHandleTrackThicknessDip : kHandleTrackLengthDip);
+  edgeTrack_.Height(side ? kHandleTrackLengthDip : kHandleTrackThicknessDip);
   const double radius = (side ? kSideBarThicknessDip : kBarHeightDip) / 2;
   barRoot_.CornerRadius(WidgetAppearance::DockCorners(radius, edge_, flushWithEdge_));
 }
@@ -1435,7 +1436,7 @@ void OverlayWindow::ShowOverlay() {
   if (view_ == View::ScreenEdge) return;
   LayoutWindow();
   ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-  if (!edgeCollapsed_) StartTimer();
+  StartTimer();
   ApplyState();
 }
 
@@ -1465,7 +1466,10 @@ void OverlayWindow::Close() {
 
 void OverlayWindow::ApplyState() {
   if (window_ == nullptr || hwnd_ == nullptr || morphOutgoing_ != Layer::None) return;
-  if (edgeCollapsed_ && view_ != View::ScreenEdge) return;
+  if (edgeCollapsed_ && view_ != View::ScreenEdge) {
+    RefreshEdgeHandle();
+    return;
+  }
   switch (view_) {
     case View::ScreenEdge:
       if (visible_) RefreshScreenEdge();
@@ -1474,6 +1478,20 @@ void OverlayWindow::ApplyState() {
     case View::Bar: RefreshBar(); break;
   }
   RefreshDetail();
+}
+
+void OverlayWindow::RefreshEdgeHandle() {
+  const auto now = NowClock();
+  const auto plan = Services::Instance().PlanFor(now);
+  const auto snapshot = classtime::Evaluate(plan.segments, now);
+  const double filled = snapshot.current ? kHandleTrackLengthDip * snapshot.progress : 0.0;
+  if (snapshot.current) edgeFillBrush_.Color(KindColor(CurrentPalette(), snapshot.current->kind));
+  const bool side = IsSideEdge(edge_);
+  edgeFill_.Width(side ? kHandleTrackThicknessDip : filled);
+  edgeFill_.Height(side ? filled : kHandleTrackThicknessDip);
+  const double radius = std::min(filled, kHandleTrackThicknessDip) / 2;
+  edgeFill_.RadiusX(radius);
+  edgeFill_.RadiusY(radius);
 }
 
 void OverlayWindow::RefreshScreenEdge() {
