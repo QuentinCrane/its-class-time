@@ -170,7 +170,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
       });
       Log("tray ok");
 
-      services.SetChangeCallback(refresh);
+      services.SetChangeCallback([refresh](ClassTimeApp::Services::Change) { refresh(); });
 
       auto dispatcher = Microsoft::UI::Dispatching::DispatcherQueue::GetForCurrentThread();
       auto monitor = std::make_unique<ClassTimeApp::BoundaryMonitor>();

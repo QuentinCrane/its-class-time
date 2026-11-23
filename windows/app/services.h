@@ -71,8 +71,10 @@ class Services {
   void ForgetNotificationsForOtherDays(const std::string& dateKey);
 
   // —— UI 订阅 ——
-  void SetChangeCallback(std::function<void()> callback) { changeCallback_ = std::move(callback); }
-  void NotifyChanged();
+  enum class Change { All, Presentation };
+  using ChangeCallback = std::function<void(Change)>;
+  void SetChangeCallback(ChangeCallback callback) { changeCallback_ = std::move(callback); }
+  void NotifyChanged(Change change = Change::All);
 
   std::filesystem::path dataDirectory() const { return dataDir_; }
   std::filesystem::path configPath() const;
@@ -96,7 +98,7 @@ class Services {
   bool usingOverride_ = false;
   bool initialized_ = false;
   std::filesystem::path dataDir_;
-  std::function<void()> changeCallback_;
+  ChangeCallback changeCallback_;
 };
 
 // 中文界面文案

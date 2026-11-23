@@ -37,13 +37,17 @@ class OverlayWindow {
   void FinishDrag(bool savePosition);
   void SnapTo(POINT target, RECT workArea);
   void StopSnap();
-  // 位置/尺寸变化：可指定是否用补间过渡，避免贴边位置与显示形式“闪现”。
-  void LayoutWindow(bool animate = false);
+  // 位置/尺寸立即按当前设置落位；补间滑行由 AnimateWindowRect 负责，
+  // 避免贴边位置与显示形式切换时直接闪现。
+  void LayoutWindow();
+  void ApplyLayoutStyle();
   RECT ComputeLayoutRect();
   void ApplyWindowRect(const RECT& rect);
-  void AnimateWindowRect(const RECT& target);
+  enum class Layer { None, Bar, Ring, Handle };
+  void AnimateWindowRect(const RECT& target, Layer outgoing);
+  void AnimateScreenEdge(bool entering);
+  Layer CurrentLayer() const;
   void StopWindowMotion();
-  void BeginMorph();
   void FinishMorph();
   void SettleMotion();
   void QueueEdgeCollapse();
@@ -56,6 +60,8 @@ class OverlayWindow {
   void RefreshRing();
   void RefreshScreenEdge();
   void HideScreenEdge();
+  // 屏幕边框条的透明度过渡：出现/消失不再硬切。
+  void RenderStrips(int alpha);
   void UpdateWindowShape();
   void StartTimer();
   void StopTimer();
@@ -78,16 +84,9 @@ class OverlayWindow {
   winrt::event_token snapFrame_{};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer edgeTimer_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard edgeMotion_{nullptr};
-  // 窗口矩形补间 + 形态切换时的内容淡入淡出。
+  // 屏幕边框条整体透明度（0-255），切换形式时做淡入淡出。
+  int stripAlpha_ = 255;
   winrt::event_token windowMotionFrame_{};
-  RECT windowMotionFrom_{};
-  RECT windowMotionTo_{};
-  RECT lastWindowMotion_{};
-  std::chrono::steady_clock::time_point windowMotionStarted_{};
-  int windowMotionDuration_ = 0;
-  winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard contentMotion_{nullptr};
-  uint64_t motionGeneration_ = 0;
-  enum class Layer { None, Bar, Ring, Handle };
   Layer morphOutgoing_ = Layer::None;
 
   winrt::Microsoft::UI::Xaml::Controls::Primitives::Popup detailPopup_{nullptr};
@@ -145,6 +144,7 @@ class OverlayWindow {
     int filledPixels = -1;
     uint32_t fill = 0;
     uint32_t track = 0;
+    int alpha = -1;
   };
   std::array<EdgeStrip, 4> screenEdgeStrips_;
 };

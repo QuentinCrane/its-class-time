@@ -96,7 +96,7 @@ uint32_t PremultipliedBgra(Windows::UI::Color color) {
 }
 
 bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool reverse,
-                     int filledPixels, uint32_t fill, uint32_t track) {
+                     int filledPixels, uint32_t fill, uint32_t track, int alpha = 255) {
   SIZE size{bounds.right - bounds.left, bounds.bottom - bounds.top};
   BITMAPINFO info{};
   info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -115,17 +115,24 @@ bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool revers
     const HGDIOBJ previousBitmap = SelectObject(dc, bitmap);
     if (previousBitmap && previousBitmap != HGDI_ERROR) {
       auto* pixels = static_cast<uint32_t*>(bitmapData);
-      const int length = horizontal ? size.cx : size.cy;
-      for (int y = 0; y < size.cy; ++y) {
-        for (int x = 0; x < size.cx; ++x) {
-          const int position = horizontal ? x : y;
-          const int distance = reverse ? length - 1 - position : position;
-          *pixels++ = distance < filledPixels ? fill : track;
+      const int width = size.cx;
+      if (horizontal) {
+        const int first = reverse ? width - filledPixels : filledPixels;
+        for (int y = 0; y < size.cy; ++y) {
+          std::fill_n(pixels, first, reverse ? track : fill);
+          std::fill_n(pixels + first, width - first, reverse ? fill : track);
+          pixels += width;
         }
+      } else {
+        const int first = reverse ? size.cy - filledPixels : filledPixels;
+        std::fill_n(pixels, width * first, reverse ? track : fill);
+        std::fill_n(pixels + width * first, width * (size.cy - first), reverse ? fill : track);
       }
       POINT origin{};
       POINT position{bounds.left, bounds.top};
-      BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+      // SourceConstantAlpha 与逐像素透明度相乘：淡入淡出只需重提交，不必改像素。
+      BLENDFUNCTION blend{AC_SRC_OVER, 0, static_cast<BYTE>(std::clamp(alpha, 0, 255)),
+                          AC_SRC_ALPHA};
       rendered = UpdateLayeredWindow(hwnd, nullptr, &position, &size, dc, &origin, 0, &blend,
                                      ULW_ALPHA) != FALSE;
       SelectObject(dc, previousBitmap);
@@ -835,7 +842,6 @@ void OverlayWindow::StopWindowMotion() {
   if (auto token = std::exchange(windowMotionFrame_, {}); token.value) {
     CompositionTarget::Rendering(token);
   }
-  windowMotionDuration_ = 0;
 }
 
 void OverlayWindow::ApplyWindowRect(const RECT& rect) {
@@ -845,61 +851,127 @@ void OverlayWindow::ApplyWindowRect(const RECT& rect) {
   UpdateWindowShape();
 }
 
-// 贴边位置/偏移变化时让窗口自己“滑”过去：先快后慢，末端最多 16 DIP 的轻微回弹。
-void OverlayWindow::AnimateWindowRect(const RECT& target) {
-  if (hwnd_ == nullptr) return;
+void OverlayWindow::AnimateWindowRect(const RECT& target, Layer outgoing) {
   RECT from{};
   if (!GetWindowRect(hwnd_, &from)) {
-    ApplyWindowRect(target);
-    QueueEdgeCollapse();
-    return;
-  }
-  StopWindowMotion();
-  const int dx = target.left - from.left;
-  const int dy = target.top - from.top;
-  const int distance = std::max(std::abs(dx), std::abs(dy));
-  const bool sameSize = (target.right - target.left) == (from.right - from.left) &&
-                        (target.bottom - target.top) == (from.bottom - from.top);
-  if (!Motion::Enabled() || !IsWindowVisible(hwnd_) || distance == 0 || !sameSize) {
-    ApplyWindowRect(target);
+    FinishMorph();
+    LayoutWindow();
     ApplyState();
     QueueEdgeCollapse();
     return;
   }
+  const int oldWidth = from.right - from.left;
+  const int oldHeight = from.bottom - from.top;
+  const int width = target.right - target.left;
+  const int height = target.bottom - target.top;
+  const bool changingShape = outgoing != Layer::None || oldWidth != width || oldHeight != height;
+  const double dx = (target.left + width / 2.0) - (from.left + oldWidth / 2.0);
+  const double dy = (target.top + height / 2.0) - (from.top + oldHeight / 2.0);
+  const double distance = std::max(std::abs(dx), std::abs(dy));
+  const auto duration = std::chrono::milliseconds(
+      static_cast<int>(std::clamp(265.0 + distance / 5, 265.0, 430.0)));
+  const double recoil = std::min(0.022, 12 * dpiScale_ / std::max(1.0, distance));
+  const double outgoingOpacity = root_.Opacity();
+  MONITORINFO monitor{sizeof(monitor)};
+  if (!GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &monitor)) {
+    FinishMorph();
+    LayoutWindow();
+    ApplyState();
+    QueueEdgeCollapse();
+    return;
+  }
+  morphOutgoing_ = outgoing;
+  UpdateVisibleLayer();
+  root_.IsHitTestVisible(false);
 
-  const int duration = std::clamp(150 + distance / 4, 170, 380);
-  const double overshoot = std::min(16.0 * dpiScale_, distance * 0.12);
-  windowMotionDuration_ = duration;
-  windowMotionStarted_ = std::chrono::steady_clock::now();
-  lastWindowMotion_ = from;
-  const double total = std::max(1, distance);
+  // Keep the old HWND size while it leaves. Swap contents and native shape at
+  // the same moving center, then let the new silhouette finish the glide.
   windowMotionFrame_ = CompositionTarget::Rendering(
-      [this, from, target, duration, overshoot, total](auto const&, auto const&) {
-    const double t =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - windowMotionStarted_)
-            .count() * 1000.0 / duration;
+      [this, from, target, monitor, oldWidth, oldHeight, width, height, dx, dy,
+       duration, changingShape, outgoingOpacity, recoil, swapped = false,
+       started = std::chrono::steady_clock::time_point{}, last = from](
+          auto const&, auto const&) mutable {
+    const auto now = std::chrono::steady_clock::now();
+    if (started.time_since_epoch().count() == 0) started = now;
+    const double t = std::chrono::duration<double>(now - started) /
+                     std::chrono::duration<double>(duration);
     if (t >= 1.0) {
-      StopWindowMotion();
+      FinishMorph();
+      ApplyLayoutStyle();
       ApplyWindowRect(target);
       ApplyState();
       QueueEdgeCollapse();
       return;
     }
-    double eased = 1.0 - std::pow(1.0 - t, 3.0);
-    const double settle = std::clamp((t - 0.55) / 0.45, 0.0, 1.0);
-    const double wave = std::sin(3.141592653589793 * settle);
-    eased += (overshoot / total) * wave * wave;
-    const int width = target.right - target.left;
-    const int height = target.bottom - target.top;
-    RECT next{};
-    next.left = from.left + static_cast<int>(std::lround((target.left - from.left) * eased));
-    next.top = from.top + static_cast<int>(std::lround((target.top - from.top) * eased));
-    next.right = next.left + width;
-    next.bottom = next.top + height;
-    if (EqualRect(&next, &lastWindowMotion_)) return;
-    lastWindowMotion_ = next;
-    SetWindowPos(hwnd_, nullptr, next.left, next.top, 0, 0,
-                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    const bool swapNow = changingShape && !swapped && t >= 0.43;
+    const bool useNewSize = !changingShape || swapped || swapNow;
+    const double travel = Motion::Glide(t, recoil);
+    const int frameWidth = useNewSize ? width : oldWidth;
+    const int frameHeight = useNewSize ? height : oldHeight;
+    const POINT position = ClampToWorkArea(
+        {std::lround(from.left + oldWidth / 2.0 + dx * travel - frameWidth / 2.0),
+         std::lround(from.top + oldHeight / 2.0 + dy * travel - frameHeight / 2.0)},
+        monitor.rcWork, frameWidth, frameHeight);
+    const RECT rect{position.x, position.y, position.x + frameWidth, position.y + frameHeight};
+    if (swapNow) {
+      swapped = true;
+      root_.Opacity(0);
+      morphOutgoing_ = Layer::None;
+      UpdateVisibleLayer();
+      ApplyLayoutStyle();
+      ApplyWindowRect(rect);
+      ApplyState();
+    } else if (!EqualRect(&rect, &last)) {
+      SetWindowPos(hwnd_, nullptr, rect.left, rect.top, 0, 0,
+                   SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    last = rect;
+    if (changingShape) {
+      root_.Opacity(swapped ? Motion::SmoothStep((t - 0.43) / 0.38)
+                            : outgoingOpacity * (1.0 - Motion::SmoothStep((t - 0.15) / 0.28)));
+    } else if (outgoingOpacity < 1.0) {
+      root_.Opacity(Motion::Mix(outgoingOpacity, 1.0, Motion::SmoothStep(t * 2)));
+    }
+  });
+}
+
+void OverlayWindow::AnimateScreenEdge(bool entering) {
+  StopWindowMotion();
+  double widgetFrom = IsWindowVisible(hwnd_) ? root_.Opacity() : 0.0;
+  if (entering) {
+    if (screenEdgeStrips_.front().hwnd == nullptr) stripAlpha_ = 0;
+    RefreshScreenEdge();
+  } else {
+    const auto outgoing = CurrentLayer();
+    morphOutgoing_ = Layer::None;
+    edgeCollapsed_ = autoHideAtEdge_;
+    if (outgoing != CurrentLayer()) widgetFrom = 0;
+    UpdateVisibleLayer();
+    LayoutWindow();
+    root_.Opacity(widgetFrom);
+    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    ApplyState();
+  }
+  root_.IsHitTestVisible(false);
+  const int edgeFrom = stripAlpha_;
+  windowMotionFrame_ = CompositionTarget::Rendering(
+      [this, entering, widgetFrom, edgeFrom, started = std::chrono::steady_clock::time_point{}](
+          auto const&, auto const&) mutable {
+    const auto now = std::chrono::steady_clock::now();
+    if (started.time_since_epoch().count() == 0) started = now;
+    const double t = std::chrono::duration<double>(now - started).count() / 0.26;
+    const double fade = Motion::SmoothStep(t);
+    root_.Opacity(Motion::Mix(widgetFrom, entering ? 0.0 : 1.0, fade));
+    stripAlpha_ = static_cast<int>(std::lround(Motion::Mix(edgeFrom, entering ? 255 : 0, fade)));
+    RenderStrips(stripAlpha_);
+    if (t < 1) return;
+    if (entering) {
+      ShowWindow(hwnd_, SW_HIDE);
+    } else {
+      HideScreenEdge();
+    }
+    FinishMorph();
+    if (!entering) QueueEdgeCollapse();
   });
 }
 
@@ -914,6 +986,7 @@ void OverlayWindow::QueueEdgeCollapse() {
       RECT bounds{};
       POINT cursor{};
       if (visible_ && autoHideAtEdge_ && !dragPointer_ && !snapFrame_.value &&
+          !windowMotionFrame_.value &&
           GetWindowRect(hwnd_, &bounds) &&
           GetCursorPos(&cursor) && !PtInRect(&bounds, cursor)) {
         SetEdgeCollapsed(true, true);
@@ -987,7 +1060,9 @@ void OverlayWindow::ResetEdgeMotion() {
   edgeClosing_ = false;
   Motion::Stop(edgeMotion_);
   root_.Opacity(1);
-  EdgeContent().RenderTransform(nullptr);
+  barRoot_.RenderTransform(nullptr);
+  ringRoot_.RenderTransform(nullptr);
+  edgeHandle_.RenderTransform(nullptr);
 }
 
 FrameworkElement OverlayWindow::EdgeContent() const {
@@ -996,73 +1071,43 @@ FrameworkElement OverlayWindow::EdgeContent() const {
   return barRoot_;
 }
 
-void OverlayWindow::UpdateVisibleLayer() {
-  // 形态切换的淡出阶段，旧层要先留在屏幕上跟着淡走，不能立刻隐藏。
-  const auto show = [this](Layer layer, const FrameworkElement& element, bool wanted) {
-    element.Visibility(wanted || morphOutgoing_ == layer ? Visibility::Visible
-                                                         : Visibility::Collapsed);
-  };
-  show(Layer::Bar, barRoot_, !edgeCollapsed_ && view_ == View::Bar);
-  show(Layer::Ring, ringRoot_, !edgeCollapsed_ && view_ == View::Ring);
-  show(Layer::Handle, edgeHandle_, edgeCollapsed_);
+OverlayWindow::Layer OverlayWindow::CurrentLayer() const {
+  if (morphOutgoing_ != Layer::None) return morphOutgoing_;
+  if (view_ == View::ScreenEdge) return Layer::None;
+  if (edgeCollapsed_) return Layer::Handle;
+  return view_ == View::Ring ? Layer::Ring : Layer::Bar;
 }
 
-void OverlayWindow::BeginMorph() {
-  const uint64_t generation = ++motionGeneration_;
-  // 旧层已经由 UpdateVisibleLayer 保留在屏幕上，这里只淡出 root，
-  // 等它完全透明后再落到新布局，避免尺寸/朝向变化中途重排。
-  contentMotion_ = Motion::Fade(root_, root_.Opacity(), 0.0, 95, true);
-  contentMotion_.Completed([this, generation](auto const& sender, auto const&) {
-    if (generation != motionGeneration_ || sender != contentMotion_) return;
-    LayoutWindow();
-    if (!visible_ || edgeCollapsed_) {
-      FinishMorph();
-      ApplyState();
-      QueueEdgeCollapse();
-      return;
-    }
-    ApplyState();
-    // 落到新布局后旧层立即退场，再把 root 恢复不透明，由新内容自己淡入。
-    morphOutgoing_ = Layer::None;
-    UpdateVisibleLayer();
-    root_.Opacity(1);
-    contentMotion_ = Motion::Pop(EdgeContent(), windowWidth_ / 2.0 / dpiScale_,
-                                 windowHeight_ / 2.0 / dpiScale_, 0.94, 0.0, 190);
-    contentMotion_.Completed([this, generation](auto const& done, auto const&) {
-      if (generation != motionGeneration_ || done != contentMotion_) return;
-      FinishMorph();
-      QueueEdgeCollapse();
-    });
-    contentMotion_.Begin();
-  });
-  contentMotion_.Begin();
+void OverlayWindow::UpdateVisibleLayer() {
+  const Layer layer = CurrentLayer();
+  barRoot_.Visibility(layer == Layer::Bar ? Visibility::Visible : Visibility::Collapsed);
+  ringRoot_.Visibility(layer == Layer::Ring ? Visibility::Visible : Visibility::Collapsed);
+  edgeHandle_.Visibility(layer == Layer::Handle ? Visibility::Visible : Visibility::Collapsed);
 }
 
 void OverlayWindow::FinishMorph() {
-  Motion::Stop(contentMotion_);
-  morphOutgoing_ = Layer::None;
+  StopWindowMotion();
   root_.Opacity(1);
-  barRoot_.RenderTransform(nullptr);
-  ringRoot_.RenderTransform(nullptr);
+  root_.IsHitTestVisible(true);
+  morphOutgoing_ = Layer::None;
   UpdateVisibleLayer();
 }
 
-// 用户开始拖动/收起时，把进行中的形态过渡立即收尾，避免两套动画抢同一批元素。
 void OverlayWindow::SettleMotion() {
-  if (morphOutgoing_ == Layer::None && contentMotion_ == nullptr) return;
-  ++motionGeneration_;
+  if (!windowMotionFrame_.value) return;
+  HideScreenEdge();
   FinishMorph();
   LayoutWindow();
+  ApplyState();
 }
 
 void OverlayWindow::ApplyPresentation() {
   const classtime::PresentationSettings presentation =
       Services::Instance().config().presentation;
   const View previousView = view_;
-  const auto previousEdge = edge_;
+  const Layer outgoing = CurrentLayer();
   const bool viewChanged = presentation.view != view_;
   const bool wasScreenEdge = previousView == View::ScreenEdge;
-  const bool allDay = presentation.scope == classtime::PresentationSettings::Scope::AllDay;
   const bool autoHideChanged = presentation.autoHideAtEdge != autoHideAtEdge_;
   const bool flushChanged = presentation.flushWithEdge != flushWithEdge_;
   const bool edgeChanged = presentation.edge != edge_;
@@ -1070,12 +1115,12 @@ void OverlayWindow::ApplyPresentation() {
   const bool monitorChanged = presentation.monitorId != monitorId_;
   const bool layoutChanged = viewChanged || monitorChanged || edgeChanged || offsetChanged ||
                              flushChanged;
-  const bool sideChanged = IsSideEdge(previousEdge) != IsSideEdge(presentation.edge);
-  const bool canAnimate = visible_ && hwnd_ != nullptr && !IsIconic(hwnd_) &&
-                          IsWindowVisible(hwnd_) && !dragPointer_ && Motion::Enabled();
+  const bool orientationChanged = IsSideEdge(edge_) != IsSideEdge(presentation.edge);
+  const bool canAnimate = visible_ && !IsIconic(hwnd_) && !dragPointer_ &&
+                          !monitorChanged && Motion::Enabled();
 
   view_ = presentation.view;
-  allDay_ = allDay;
+  allDay_ = presentation.scope == classtime::PresentationSettings::Scope::AllDay;
   monitorId_ = presentation.monitorId;
   edge_ = presentation.edge;
   offsetX_ = presentation.offsetX;
@@ -1083,33 +1128,34 @@ void OverlayWindow::ApplyPresentation() {
   flushWithEdge_ = presentation.flushWithEdge;
 
   autoHideAtEdge_ = presentation.autoHideAtEdge;
-  if (view_ == View::ScreenEdge) {
+  if (view_ == View::ScreenEdge || wasScreenEdge) {
     if (viewChanged) {
       if (dragPointer_) FinishDrag(false);
       StopSnap();
-      StopWindowMotion();
-      ++motionGeneration_;
       if (edgeTimer_) edgeTimer_.Stop();
-      ResetEdgeMotion();
+      if (edgeMotion_ || edgeClosing_) ResetEdgeMotion();
       HideDetail();
-      edgeCollapsed_ = false;
-      UpdateVisibleLayer();
-      ShowWindow(hwnd_, SW_HIDE);
+      if (canAnimate) {
+        if (!wasScreenEdge) morphOutgoing_ = outgoing;
+        AnimateScreenEdge(!wasScreenEdge);
+      } else {
+        FinishMorph();
+        HideScreenEdge();
+        edgeCollapsed_ = !wasScreenEdge ? false : autoHideAtEdge_;
+        UpdateVisibleLayer();
+        if (wasScreenEdge) {
+          LayoutWindow();
+          if (visible_) ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        } else {
+          ShowWindow(hwnd_, SW_HIDE);
+        }
+      }
     }
     if (visible_) {
-      RefreshScreenEdge();
-      StartTimer();
+      if (edgeCollapsed_ && view_ != View::ScreenEdge) StopTimer();
+      else StartTimer();
+      ApplyState();
     }
-    return;
-  }
-  if (wasScreenEdge) {
-    HideScreenEdge();
-    edgeCollapsed_ = autoHideAtEdge_;
-    UpdateVisibleLayer();
-    LayoutWindow();
-    if (visible_) ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-    if (edgeCollapsed_) StopTimer();
-    ApplyState();
     return;
   }
   if (autoHideChanged) {
@@ -1121,53 +1167,38 @@ void OverlayWindow::ApplyPresentation() {
     edgeCollapsed_ = autoHideAtEdge_;
   }
 
-  // 更换显示形式或从横排变竖排时，窗口尺寸会变：先淡出旧内容，
-  // 落位后再淡入，过程里不会看到元素被临时挤扁。
-  const bool morph = canAnimate && !edgeCollapsed_ && !monitorChanged &&
-                     (viewChanged || sideChanged);
-  if (morph && (layoutChanged || autoHideChanged)) {
-    HideDetail();
-    morphOutgoing_ = previousView == View::Ring   ? Layer::Ring
-                     : previousView == View::Bar ? Layer::Bar
-                                                 : Layer::Handle;
-    ++motionGeneration_;
-    ResetEdgeMotion();
-    StopSnap();
-    StopWindowMotion();
-    UpdateVisibleLayer();
-    BeginMorph();
-    return;
-  }
-
-  UpdateVisibleLayer();
   if (layoutChanged || autoHideChanged) {
     HideDetail();
-    ResetEdgeMotion();
+    if (edgeTimer_) edgeTimer_.Stop();
+    if (edgeMotion_ || edgeClosing_) ResetEdgeMotion();
     StopSnap();
-    // 同尺寸换边只移动位置，让窗口自己滑过去；换显示器或关闭动效时直接落位。
-    const bool glide = canAnimate && !monitorChanged;
-    if (glide) {
-      LayoutWindow(true);
-      return;
+    StopWindowMotion();
+    HideScreenEdge();
+    if (canAnimate && IsWindowVisible(hwnd_)) {
+      const RECT target = ComputeLayoutRect();
+      if (!IsRectEmpty(&target)) {
+        const Layer previous = viewChanged || orientationChanged || morphOutgoing_ != Layer::None
+                                   ? outgoing : Layer::None;
+        if (previous == Layer::None) ApplyLayoutStyle();
+        AnimateWindowRect(target, previous);
+        return;
+      }
     }
+    FinishMorph();
     LayoutWindow();
     QueueEdgeCollapse();
   }
   ApplyState();
 }
 
-void OverlayWindow::LayoutWindow(bool animate) {
-  if (hwnd_ == nullptr || view_ == View::ScreenEdge) return;
+void OverlayWindow::LayoutWindow() {
   const RECT target = ComputeLayoutRect();
   if (IsRectEmpty(&target)) return;
-  if (animate) {
-    AnimateWindowRect(target);
-    return;
-  }
+  ApplyLayoutStyle();
   ApplyWindowRect(target);
 }
 
-// 只计算目标矩形并同步与尺寸相关的样式，不动窗口本身。
+// 先计算目标矩形，等可见内容落位时再同步样式。
 RECT OverlayWindow::ComputeLayoutRect() {
   if (hwnd_ == nullptr || view_ == View::ScreenEdge) return {};
   HMONITOR monitor = FindMonitor(monitorId_);
@@ -1201,24 +1232,6 @@ RECT OverlayWindow::ComputeLayoutRect() {
   const int square = ring ? std::min(fullWidth, fullHeight) : 0;
   windowWidth_ = ring ? square : fullWidth;
   windowHeight_ = ring ? square : fullHeight;
-
-  // 左右贴边时，分节长条转为竖向排列；圆环不受影响。
-  segmentPanel_.Orientation(side ? Orientation::Vertical : Orientation::Horizontal);
-  barRoot_.Padding(side ? Thickness{0, kBarInsetDip, 0, kBarInsetDip}
-                        : Thickness{kBarInsetDip, 0, kBarInsetDip, 0});
-  edgeGrip_.Width(side ? 3 : 34);
-  edgeGrip_.Height(side ? 34 : 3);
-  // 紧贴边缘时把靠边一侧的圆角削平，视觉上像从任务栏/屏幕边缘长出来。
-  CornerRadius corner{12, 12, 12, 12};
-  if (flushWithEdge_) {
-    switch (edge_) {
-      case classtime::PresentationSettings::Edge::Top: corner = {0, 0, 12, 12}; break;
-      case classtime::PresentationSettings::Edge::Left: corner = {0, 12, 12, 0}; break;
-      case classtime::PresentationSettings::Edge::Right: corner = {12, 0, 0, 12}; break;
-      default: corner = {12, 12, 0, 0}; break;
-    }
-  }
-  barRoot_.CornerRadius(corner);
 
   if (edgeCollapsed_) {
     const int handleW = static_cast<int>(std::lround(kHandleWidthDip * dpiScale_));
@@ -1254,10 +1267,32 @@ RECT OverlayWindow::ComputeLayoutRect() {
   return RECT{position.x, position.y, position.x + windowWidth_, position.y + windowHeight_};
 }
 
+void OverlayWindow::ApplyLayoutStyle() {
+  const bool side = IsSideEdge(edge_);
+  // 左右贴边时，分节长条转为竖向排列；圆环不受影响。
+  segmentPanel_.Orientation(side ? Orientation::Vertical : Orientation::Horizontal);
+  barRoot_.Padding(side ? Thickness{0, kBarInsetDip, 0, kBarInsetDip}
+                        : Thickness{kBarInsetDip, 0, kBarInsetDip, 0});
+  edgeGrip_.Width(side ? 3 : 34);
+  edgeGrip_.Height(side ? 34 : 3);
+  // 紧贴边缘时把靠边一侧的圆角削平，视觉上像从任务栏/屏幕边缘长出来。
+  CornerRadius corner{12, 12, 12, 12};
+  if (flushWithEdge_) {
+    switch (edge_) {
+      case classtime::PresentationSettings::Edge::Top: corner = {0, 0, 12, 12}; break;
+      case classtime::PresentationSettings::Edge::Left: corner = {0, 12, 12, 0}; break;
+      case classtime::PresentationSettings::Edge::Right: corner = {12, 0, 0, 12}; break;
+      default: corner = {12, 12, 0, 0}; break;
+    }
+  }
+  barRoot_.CornerRadius(corner);
+}
+
 void OverlayWindow::UpdateWindowShape() {
   if (!hwnd_) return;
   RECT desired{};
-  if (view_ == View::Ring && !edgeCollapsed_) {
+  const Layer layer = CurrentLayer();
+  if (layer == Layer::Ring) {
     RECT window{};
     if (!GetWindowRect(hwnd_, &window)) return;
     const int width = window.right - window.left;
@@ -1272,7 +1307,7 @@ void OverlayWindow::UpdateWindowShape() {
     desired.bottom = desired.top + diameter - 2 * inset;
   }
   // 紧贴边缘的横条需要直角落到任务栏/屏幕边缘；圆环本身用椭圆裁剪。
-  const bool wantSharp = !IsRectEmpty(&desired) || (view_ == View::Bar && flushWithEdge_);
+  const bool wantSharp = !IsRectEmpty(&desired) || (layer == Layer::Bar && flushWithEdge_);
   if (EqualRect(&desired, &ringRegionBounds_) && wantSharp == sharpWindowCorners_) return;
 
   HRGN region = nullptr;
@@ -1323,8 +1358,6 @@ void OverlayWindow::HideOverlay() {
   HideDetail();
   if (dragPointer_) FinishDrag(false);
   StopSnap();
-  StopWindowMotion();
-  ++motionGeneration_;
   FinishMorph();
   if (edgeTimer_) edgeTimer_.Stop();
   ResetEdgeMotion();
@@ -1345,7 +1378,8 @@ void OverlayWindow::Close() {
 }
 
 void OverlayWindow::ApplyState() {
-  if (window_ == nullptr || hwnd_ == nullptr || edgeCollapsed_) return;
+  if (window_ == nullptr || hwnd_ == nullptr || morphOutgoing_ != Layer::None) return;
+  if (edgeCollapsed_ && view_ != View::ScreenEdge) return;
   switch (view_) {
     case View::ScreenEdge:
       if (visible_) RefreshScreenEdge();
@@ -1417,6 +1451,7 @@ void OverlayWindow::RefreshScreenEdge() {
   }
   const auto fill = PremultipliedBgra(accent);
   const auto track = PremultipliedBgra(Windows::UI::ColorHelper::FromArgb(172, 100, 117, 137));
+  const int alpha = stripAlpha_;
   int remaining = static_cast<int>(std::lround(progress * perimeter));
   for (size_t i = 0; i < screenEdgeStrips_.size(); ++i) {
     auto& strip = screenEdgeStrips_[i];
@@ -1430,9 +1465,9 @@ void OverlayWindow::RefreshScreenEdge() {
     const int pixels = std::clamp(remaining, 0, lengths[i]);
     remaining -= pixels;
     if (pixels == strip.filledPixels && fill == strip.fill && track == strip.track &&
-        EqualRect(&bounds[i], &strip.bounds)) continue;
+        alpha == strip.alpha && EqualRect(&bounds[i], &strip.bounds)) continue;
     if (!strip.hwnd || !RenderEdgeStrip(strip.hwnd, bounds[i], i % 2 == 0, i >= 2,
-                                       pixels, fill, track)) {
+                                        pixels, fill, track, alpha)) {
       HideScreenEdge();
       return;
     }
@@ -1440,14 +1475,27 @@ void OverlayWindow::RefreshScreenEdge() {
     strip.filledPixels = pixels;
     strip.fill = fill;
     strip.track = track;
+    strip.alpha = alpha;
     if (!IsWindowVisible(strip.hwnd)) ShowWindow(strip.hwnd, SW_SHOWNOACTIVATE);
   }
 }
 
 void OverlayWindow::HideScreenEdge() {
+  stripAlpha_ = 255;
   for (auto& strip : screenEdgeStrips_) {
     if (strip.hwnd) DestroyWindow(strip.hwnd);
     strip = {};
+  }
+}
+
+void OverlayWindow::RenderStrips(int alpha) {
+  for (size_t i = 0; i < screenEdgeStrips_.size(); ++i) {
+    auto& strip = screenEdgeStrips_[i];
+    if (!strip.hwnd || strip.filledPixels < 0 || alpha == strip.alpha) continue;
+    if (RenderEdgeStrip(strip.hwnd, strip.bounds, i % 2 == 0, i >= 2, strip.filledPixels,
+                        strip.fill, strip.track, alpha)) {
+      strip.alpha = alpha;
+    }
   }
 }
 

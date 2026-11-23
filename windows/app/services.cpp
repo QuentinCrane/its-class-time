@@ -235,7 +235,7 @@ void Services::UpdatePresentation(const classtime::PresentationSettings& present
     PersistConfig();
     RecomputeLocked();
   }
-  NotifyChanged();
+  NotifyChanged(Change::Presentation);
 }
 
 void Services::UpdateNotifications(const classtime::NotificationSettings& settings) {
@@ -378,13 +378,13 @@ void Services::ForgetNotificationsForOtherDays(const std::string& dateKey) {
   PersistRuntime();
 }
 
-void Services::NotifyChanged() {
-  std::function<void()> callback;
+void Services::NotifyChanged(Change change) {
+  ChangeCallback callback;
   {
     std::lock_guard<std::mutex> guard(mutex_);
     callback = changeCallback_;
   }
-  if (callback) callback();
+  if (callback) callback(change);
 }
 
 std::wstring DayStateLabel(classtime::DayState state) {

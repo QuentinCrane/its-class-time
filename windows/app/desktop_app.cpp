@@ -87,11 +87,11 @@ void DesktopApp::Initialize() {
   tray_ = std::make_unique<TrayIcon>();
   tray_->Create(GetModuleHandleW(nullptr), [this](UINT command) { HandleTrayCommand(command); });
 
-  services.SetChangeCallback([this] {
+  services.SetChangeCallback([this](Services::Change change) {
     if (monitor_) monitor_->RequestRefresh();
     auto dispatcher = dispatcher_;
     if (dispatcher == nullptr) return;
-    dispatcher.TryEnqueue([this] { ApplyState(); });
+    dispatcher.TryEnqueue([this, change] { ApplyState(change == Services::Change::Presentation); });
   });
 
   monitor_ = std::make_unique<BoundaryMonitor>();
@@ -113,7 +113,7 @@ void DesktopApp::Initialize() {
   }
 }
 
-void DesktopApp::ApplyState() {
+void DesktopApp::ApplyState(bool presentationOnly) {
   if (exiting_) return;
   auto& services = Services::Instance();
   const auto& config = services.config();
@@ -133,7 +133,7 @@ void DesktopApp::ApplyState() {
       overlay_->HideOverlay();
     }
   }
-  if (settings_) settings_->ApplyState();
+  if (settings_) settings_->ApplyState(presentationOnly);
 }
 
 void DesktopApp::ShowSettings() {

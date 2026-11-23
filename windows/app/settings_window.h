@@ -11,7 +11,7 @@ class SettingsWindow {
   ~SettingsWindow();
 
   void Show();
-  void ApplyState();
+  void ApplyState(bool presentationOnly = false);
 
  private:
   void Build();
@@ -127,16 +127,17 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::Canvas previewStageB_{nullptr};
   int previewStage_ = 0;
   bool previewDrawn_ = false;
-  classtime::PresentationSettings::View previewView_ = classtime::PresentationSettings::View::Bar;
-  classtime::PresentationSettings::Edge previewEdge_ = classtime::PresentationSettings::Edge::Bottom;
-  bool previewHoveredShown_ = false;
-  bool previewVisibleShown_ = true;
-  uint64_t previewGeneration_ = 0;
+  struct PreviewAppearance {
+    classtime::PresentationSettings presentation;
+    bool expanded = false;
+    int thickness = 0;
+  };
+  PreviewAppearance previewAppearance_[2];
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard previewMotion_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid displayOptionsHost_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::RectangleGeometry displayOptionsClip_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard displayPanelMotion_{nullptr};
-  winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard displayPanelFadeIn_{nullptr};
+  std::optional<bool> displayPanelScreenEdge_;
   winrt::Microsoft::UI::Xaml::Controls::StackPanel dockControls_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel screenEdgeControls_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Slider screenEdgeSlider_{nullptr};

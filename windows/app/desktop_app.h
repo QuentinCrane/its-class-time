@@ -40,7 +40,7 @@ struct DesktopApp
 
  private:
   void Initialize();
-  void ApplyState();
+  void ApplyState(bool presentationOnly = false);
   void ShowSettings();
   void HandleTrayCommand(UINT command);
 

@@ -19,15 +19,35 @@ inline void Stop(Storyboard& storyboard) {
 
 inline void Animate(const Storyboard& storyboard, const DependencyObject& target,
                     const wchar_t* property, double from, double to, int milliseconds,
-                    const EasingFunctionBase& easing) {
+                    const EasingFunctionBase& easing, bool changesLayout = false,
+                    int delayMilliseconds = 0) {
   DoubleAnimation animation;
   animation.From(from);
   animation.To(to);
   animation.Duration(DurationHelper::FromTimeSpan(std::chrono::milliseconds(milliseconds)));
   animation.EasingFunction(easing);
+  animation.EnableDependentAnimation(changesLayout);
+  if (delayMilliseconds > 0) {
+    animation.BeginTime(winrt::box_value(winrt::Windows::Foundation::TimeSpan(std::chrono::milliseconds(delayMilliseconds)))
+                            .as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::TimeSpan>>());
+  }
   Storyboard::SetTarget(animation, target);
   Storyboard::SetTargetProperty(animation, property);
   storyboard.Children().Append(animation);
+}
+
+inline double Mix(double from, double to, double progress) {
+  return from + (to - from) * progress;
+}
+
+inline double SmoothStep(double progress) {
+  const double t = std::clamp(progress, 0.0, 1.0);
+  return t * t * (3.0 - 2.0 * t);
+}
+
+inline double Glide(double t, double overshoot) {
+  const double recoil = std::sin(3.141592653589793 * SmoothStep((t - 0.74) / 0.26));
+  return SmoothStep(t / 0.85) + overshoot * recoil;
 }
 
 struct Pose {
@@ -39,38 +59,6 @@ struct Pose {
 inline Pose ReadPose(const FrameworkElement& surface, const FrameworkElement& content) {
   const auto offset = content.RenderTransform().try_as<TranslateTransform>();
   return {surface.Opacity(), offset ? offset.Y() : 0, offset ? offset.X() : 0};
-}
-
-// 只做透明度过渡：用于内容换层时的淡入淡出。
-inline Storyboard Fade(const DependencyObject& target, double from, double to, int milliseconds,
-                       bool leaving = false) {
-  Storyboard storyboard;
-  SineEase easing;
-  easing.EasingMode(leaving ? EasingMode::EaseIn : EasingMode::EaseOut);
-  Animate(storyboard, target, L"Opacity", from, to, milliseconds, easing);
-  return storyboard;
-}
-
-// 以指定中心轻微缩放并淡入：形状改变后用来交代“从旧位置落位”。
-inline Storyboard Pop(const FrameworkElement& content, double centerX, double centerY,
-                      double fromScale, double fromOpacity, int milliseconds) {
-  ScaleTransform scale;
-  scale.CenterX(centerX);
-  scale.CenterY(centerY);
-  scale.ScaleX(fromScale);
-  scale.ScaleY(fromScale);
-  content.RenderTransform(scale);
-  content.Opacity(fromOpacity);
-  Storyboard storyboard;
-  CubicEase settle;
-  settle.EasingMode(EasingMode::EaseOut);
-  Animate(storyboard, content, L"Opacity", fromOpacity, 1.0, milliseconds, settle);
-  BackEase grow;
-  grow.Amplitude(0.05);
-  grow.EasingMode(EasingMode::EaseOut);
-  Animate(storyboard, scale, L"ScaleX", fromScale, 1.0, milliseconds + 40, grow);
-  Animate(storyboard, scale, L"ScaleY", fromScale, 1.0, milliseconds + 40, grow);
-  return storyboard;
 }
 
 inline Storyboard Slide(const FrameworkElement& surface, const FrameworkElement& content,

@@ -267,18 +267,25 @@ struct PreviewPoint {
 };
 
 // 控件贴近哪条边，缩放入场时就从那条边的中点出发。
-PreviewPoint PreviewAnchor(Presentation::View view, Presentation::Edge edge) {
-  if (view == Presentation::View::ScreenEdge) {
+PreviewPoint PreviewAnchor(const Presentation& presentation, bool expanded) {
+  using Edge = Presentation::Edge;
+  const auto edge = presentation.edge;
+  const bool side = edge == Edge::Left || edge == Edge::Right;
+  const bool grip = presentation.autoHideAtEdge && !expanded;
+  const bool flush = presentation.flushWithEdge;
+  if (!presentation.visible || presentation.view == Presentation::View::ScreenEdge) {
     return {kPreviewScreenCenterX, kPreviewScreenTop + kPreviewScreenHeight / 2};
   }
-  switch (edge) {
-    case Presentation::Edge::Top: return {kPreviewScreenCenterX, kPreviewScreenTop + 10};
-    case Presentation::Edge::Left: return {kPreviewScreenLeft + 10, kPreviewScreenTop + kPreviewScreenHeight / 2};
-    case Presentation::Edge::Right:
-      return {kPreviewScreenLeft + kPreviewScreenWidth - 10,
-              kPreviewScreenTop + kPreviewScreenHeight / 2};
-    default: return {kPreviewScreenCenterX, kPreviewScreenTop + kPreviewScreenHeight - 10};
+  const bool ring = presentation.view == Presentation::View::Ring && !grip;
+  if (side) {
+    const double inset = grip ? 7.5 : ring ? (flush ? 46 : 55) : (flush ? 12.5 : 18.5);
+    const double x = edge == Edge::Left ? kPreviewScreenLeft + inset
+                                       : kPreviewScreenLeft + kPreviewScreenWidth - inset;
+    return {x, kPreviewScreenTop + kPreviewScreenHeight / 2};
   }
+  const double inset = grip ? 4.5 : ring ? (flush ? 46 : 51) : (flush ? 12.5 : 19.5);
+  return {kPreviewScreenCenterX, edge == Edge::Top ? kPreviewScreenTop + inset
+                           : kPreviewScreenTop + kPreviewScreenHeight - inset};
 }
 
 }  // namespace
@@ -289,6 +296,8 @@ SettingsWindow::~SettingsWindow() {
   CommitScreenEdgeThickness();
   Motion::Stop(editorMotion_);
   Motion::Stop(sectionMotion_);
+  Motion::Stop(previewMotion_);
+  Motion::Stop(displayPanelMotion_);
   if (window_ != nullptr) {
     try {
       window_.Close();
@@ -638,14 +647,15 @@ void SettingsWindow::Build() {
     // 下面的开关就不会被瞬间顶开或吸上。
     displayOptionsHost_ = Grid();
     displayOptionsClip_ = RectangleGeometry();
-    displayOptionsHost_.Clip(displayOptionsClip_);
+    screenEdgeControls_.VerticalAlignment(VerticalAlignment::Top);
+    dockControls_.VerticalAlignment(VerticalAlignment::Top);
     displayOptionsHost_.Children().Append(screenEdgeControls_);
     displayOptionsHost_.Children().Append(dockControls_);
     screenEdgeControls_.Visibility(Visibility::Collapsed);
     dockControls_.Visibility(Visibility::Collapsed);
-    displayOptionsHost_.SizeChanged([this](auto const&, auto const&) {
-      displayOptionsClip_.Rect({0.0f, 0.0f, static_cast<float>(displayOptionsHost_.ActualWidth()),
-                                static_cast<float>(displayOptionsHost_.ActualHeight())});
+    displayOptionsHost_.SizeChanged([this](auto const&, auto const& args) {
+      const auto size = args.NewSize();
+      displayOptionsClip_.Rect({0.0f, 0.0f, size.Width, size.Height});
     });
     Add(stack, displayOptionsHost_);
     visibleToggle_ = ToggleSwitch();
@@ -683,8 +693,16 @@ void SettingsWindow::Build() {
     previewStageA_ = makeStage();
     previewStageB_ = makeStage();
     displayPreview_.Children().Append(previewChrome_);
-    displayPreview_.Children().Append(previewStageA_);
-    displayPreview_.Children().Append(previewStageB_);
+    Canvas motionSurface;
+    motionSurface.Width(kPreviewWidth);
+    motionSurface.Height(kPreviewHeight);
+    RectangleGeometry screenClip;
+    screenClip.Rect({kPreviewScreenLeft, kPreviewScreenTop, kPreviewScreenWidth,
+                     kPreviewScreenHeight});
+    motionSurface.Clip(screenClip);
+    motionSurface.Children().Append(previewStageA_);
+    motionSurface.Children().Append(previewStageB_);
+    displayPreview_.Children().Append(motionSurface);
     Viewbox previewScale;
     previewScale.MaxHeight(kPreviewHeight);
     previewScale.Child(displayPreview_);
@@ -1316,45 +1334,15 @@ void SettingsWindow::Show() {
     ShowWindow(hwnd_, SW_SHOW);
     SetForegroundWindow(hwnd_);
   }
-  // TEMP-PROBE: 供动效自检使用，验证后删除。
-  wchar_t section[32]{};
-  if (GetEnvironmentVariableW(L"CLASSTIME_SETTINGS_SECTION", section, 32) > 0) {
-    for (const auto& entry : nav_.MenuItems()) {
-      if (auto item = entry.try_as<NavigationViewItem>()) {
-        if (std::wstring(unbox_value<hstring>(item.Tag()).c_str()) == section) {
-          nav_.SelectedItem(item);
-          break;
-        }
-      }
-    }
-  }
-  wchar_t probe[8]{};
-  if (GetEnvironmentVariableW(L"CLASSTIME_MOTION_PROBE", probe, 8) > 0) {
-    auto timer = window_.DispatcherQueue().CreateTimer();
-    timer.Interval(std::chrono::milliseconds(700));
-    timer.IsRepeating(true);
-    static int step = 0;
-    timer.Tick([this](auto const&, auto const&) {
-      ++step;
-      auto presentation = Services::Instance().config().presentation;
-      switch (step) {
-        case 1: presentation.view = Presentation::View::Ring; break;
-        case 2: presentation.edge = Presentation::Edge::Left; break;
-        case 3: presentation.view = Presentation::View::ScreenEdge; break;
-        case 4:
-          presentation.view = Presentation::View::Bar;
-          presentation.edge = Presentation::Edge::Bottom;
-          break;
-        case 5: presentation.view = Presentation::View::Ring; break;
-        default: return;
-      }
-      Services::Instance().UpdatePresentation(presentation);
-    });
-    timer.Start();
-  }
 }
 
-void SettingsWindow::ApplyState() {
+void SettingsWindow::ApplyState(bool presentationOnly) {
+  if (presentationOnly) {
+    const bool wasSyncing = std::exchange(syncing_, true);
+    RefreshDisplayControls();
+    syncing_ = wasSyncing;
+    return;
+  }
   if (editorOpen_) {
     RefreshNotificationControls();
     return;
@@ -1627,78 +1615,57 @@ void SettingsWindow::RefreshDisplayControls() {
 void SettingsWindow::ApplyDisplayPanelVisibility(bool screenEdge, bool animate) {
   const StackPanel incoming = screenEdge ? screenEdgeControls_ : dockControls_;
   const StackPanel outgoing = screenEdge ? dockControls_ : screenEdgeControls_;
-  if (incoming == nullptr || outgoing == nullptr) return;
-  if (incoming.Visibility() == Visibility::Visible &&
-      outgoing.Visibility() == Visibility::Collapsed) {
-    return;
-  }
+  if (incoming == nullptr || outgoing == nullptr || displayPanelScreenEdge_ == screenEdge) return;
+  displayPanelScreenEdge_ = screenEdge;
 
-  const auto settle = [this, screenEdge] {
-    Motion::Stop(displayPanelFadeIn_);
-    screenEdgeControls_.Opacity(1);
-    dockControls_.Opacity(1);
-    screenEdgeControls_.RenderTransform(nullptr);
-    dockControls_.RenderTransform(nullptr);
-    screenEdgeControls_.Height(std::numeric_limits<double>::quiet_NaN());
-    dockControls_.Height(std::numeric_limits<double>::quiet_NaN());
-    screenEdgeControls_.Visibility(screenEdge ? Visibility::Visible : Visibility::Collapsed);
-    dockControls_.Visibility(screenEdge ? Visibility::Collapsed : Visibility::Visible);
-    displayOptionsHost_.Height(std::numeric_limits<double>::quiet_NaN());
-  };
-
-  Motion::Stop(displayPanelMotion_);
-  Motion::Stop(displayPanelFadeIn_);
+  const double incomingOpacity =
+      incoming.Visibility() == Visibility::Visible ? incoming.Opacity() : 0;
+  const double outgoingOpacity =
+      outgoing.Visibility() == Visibility::Visible ? outgoing.Opacity() : 0;
   const double width = displayOptionsHost_.ActualWidth();
   const double from = displayOptionsHost_.ActualHeight();
+  Motion::Stop(displayPanelMotion_);
+
+  const auto settle = [this, incoming, outgoing] {
+    incoming.Visibility(Visibility::Visible);
+    outgoing.Visibility(Visibility::Collapsed);
+    outgoing.IsHitTestVisible(false);
+    incoming.IsHitTestVisible(true);
+    incoming.Opacity(1);
+    outgoing.Opacity(0);
+    incoming.RenderTransform(nullptr);
+    outgoing.RenderTransform(nullptr);
+    displayOptionsHost_.Height(std::numeric_limits<double>::quiet_NaN());
+    displayOptionsHost_.Clip(nullptr);
+    Motion::Stop(displayPanelMotion_);
+  };
   if (!animate || !Motion::Enabled() || width <= 1 || from <= 1) {
     settle();
     return;
   }
 
-  // 先量出新面板的目标高度，宿主高度从旧值补间过去，下面的开关随之滑行。
   incoming.Visibility(Visibility::Visible);
-  incoming.Opacity(0);
   incoming.Measure(Size{static_cast<float>(width), std::numeric_limits<float>::infinity()});
-  const double to = std::max(1.0, static_cast<double>(incoming.DesiredSize().Height));
-
-  outgoing.Opacity(1);
-  TranslateTransform outgoingOffset;
-  outgoingOffset.Y(0);
-  outgoing.RenderTransform(outgoingOffset);
-  TranslateTransform incomingOffset;
-  incomingOffset.Y(6);
-  incoming.RenderTransform(incomingOffset);
+  const double to = incoming.DesiredSize().Height;
   displayOptionsHost_.Height(from);
+  displayOptionsClip_.Rect({0, 0, static_cast<float>(width), static_cast<float>(from)});
+  displayOptionsHost_.Clip(displayOptionsClip_);
+  incoming.IsHitTestVisible(true);
+  outgoing.IsHitTestVisible(false);
+  Canvas::SetZIndex(incoming, 1);
+  Canvas::SetZIndex(outgoing, 0);
 
   Storyboard storyboard;
-  CubicEase heightEase;
-  heightEase.EasingMode(EasingMode::EaseOut);
-  Motion::Animate(storyboard, displayOptionsHost_, L"Height", from, to, 230, heightEase);
-  SineEase leave;
-  leave.EasingMode(EasingMode::EaseIn);
-  Motion::Animate(storyboard, outgoing, L"Opacity", 1, 0, 95, leave);
-  Motion::Animate(storyboard, outgoingOffset, L"Y", 0, -6, 95, leave);
-  storyboard.Completed([this, screenEdge, incoming, incomingOffset](auto const& sender,
-                                                                   auto const&) {
-    if (sender != displayPanelMotion_) return;
-    screenEdgeControls_.Visibility(screenEdge ? Visibility::Collapsed : Visibility::Visible);
-    dockControls_.Visibility(screenEdge ? Visibility::Visible : Visibility::Collapsed);
-    Storyboard fadeIn;
-    CubicEase ease;
-    ease.EasingMode(EasingMode::EaseOut);
-    Motion::Animate(fadeIn, incoming, L"Opacity", 0, 1, 150, ease);
-    Motion::Animate(fadeIn, incomingOffset, L"Y", 6, 0, 170, ease);
-    displayPanelFadeIn_ = fadeIn;
-    displayPanelFadeIn_.Completed([this, incoming](auto const& done, auto const&) {
-      if (done != displayPanelFadeIn_) return;
-      Motion::Stop(displayPanelFadeIn_);
-      incoming.Opacity(1);
-      incoming.RenderTransform(nullptr);
-      displayOptionsHost_.Height(std::numeric_limits<double>::quiet_NaN());
-      screenEdgeControls_.Height(std::numeric_limits<double>::quiet_NaN());
-      dockControls_.Height(std::numeric_limits<double>::quiet_NaN());
-    });
-    displayPanelFadeIn_.Begin();
+  CubicEase ease;
+  ease.EasingMode(EasingMode::EaseInOut);
+  Motion::Animate(storyboard, displayOptionsHost_, L"Height", from, to, 235, ease, true);
+  incoming.Opacity(incomingOpacity);
+  outgoing.Opacity(outgoingOpacity);
+  Motion::Animate(storyboard, outgoing, L"Opacity", outgoingOpacity, 0, 115, ease);
+  Motion::Animate(storyboard, incoming, L"Opacity", incomingOpacity, 1, 145, ease,
+                  false, 90);
+  storyboard.Completed([this, settle](auto const& sender, auto const&) {
+    if (sender == displayPanelMotion_) settle();
   });
   displayPanelMotion_ = storyboard;
   displayPanelMotion_.Begin();
@@ -1720,14 +1687,31 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
   screenEdgeValue_.Text(std::to_wstring(thickness));
   if (previewChrome_ == nullptr || previewStageA_ == nullptr || previewStageB_ == nullptr) return;
 
-  // 两层交替承载控件外观：新内容先画到当前不可见的一层，再与旧层交叉过渡。
+  const bool expanded = previewHovered_ && presentation.autoHideAtEdge;
   const Canvas stages[2] = {previewStageA_, previewStageB_};
-  const bool hadContent = previewDrawn_;
-  const int targetIndex = hadContent ? (previewStage_ == 0 ? 1 : 0) : 0;
-  const Canvas target = stages[targetIndex];
-  const Canvas source = hadContent ? stages[previewStage_] : nullptr;
+  const auto& latest = previewAppearance_[previewStage_];
+  const auto& last = latest.presentation;
+  if (previewDrawn_ && last.view == presentation.view && last.scope == presentation.scope &&
+      last.edge == presentation.edge && last.visible == presentation.visible &&
+      last.autoHideAtEdge == presentation.autoHideAtEdge &&
+      last.flushWithEdge == presentation.flushWithEdge && latest.expanded == expanded &&
+      latest.thickness == thickness) return;
 
-  ++previewGeneration_;
+  // A new click starts from whichever layer is still most visible.
+  int sourceIndex = previewStage_;
+  if (previewMotion_ && stages[1 - sourceIndex].Opacity() > stages[sourceIndex].Opacity()) {
+    sourceIndex = 1 - sourceIndex;
+  }
+  const int targetIndex = previewDrawn_ ? 1 - sourceIndex : 0;
+  const Canvas source = previewDrawn_ ? stages[sourceIndex] : nullptr;
+  const Canvas target = stages[targetIndex];
+  const auto previous = previewAppearance_[sourceIndex];
+  const auto from = PreviewAnchor(previous.presentation, previous.expanded);
+  const auto to = PreviewAnchor(presentation, expanded);
+  auto sourceTransform = source ? source.RenderTransform().try_as<CompositeTransform>() : nullptr;
+  const double fromX = from.x + (sourceTransform ? sourceTransform.TranslateX() : 0);
+  const double fromY = from.y + (sourceTransform ? sourceTransform.TranslateY() : 0);
+  const double sourceOpacity = source ? source.Opacity() : 0;
   Motion::Stop(previewMotion_);
   target.Children().Clear();
   auto children = target.Children();
@@ -1895,86 +1879,78 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
   };
   draw();
 
-  const View previousView = previewView_;
-  const Presentation::Edge previousEdge = previewEdge_;
-  const bool moved = hadContent &&
-                     (presentation.view != previousView || presentation.edge != previousEdge);
-  const bool reshaped = hadContent && !moved &&
-                        (presentation.visible != previewVisibleShown_ ||
-                         previewHovered_ != previewHoveredShown_);
-
   previewDrawn_ = true;
-  previewView_ = presentation.view;
-  previewEdge_ = presentation.edge;
-  previewHoveredShown_ = previewHovered_;
-  previewVisibleShown_ = presentation.visible;
+  previewAppearance_[targetIndex] = {presentation, expanded, thickness};
   previewStage_ = targetIndex;
 
-  if (!Motion::Enabled() || !(moved || reshaped)) {
+  const auto& old = previous.presentation;
+  const bool shapeChanged = old.view != presentation.view ||
+      old.visible != presentation.visible || old.autoHideAtEdge != presentation.autoHideAtEdge ||
+      previous.expanded != expanded;
+  const bool docked = old.visible && presentation.visible &&
+      old.view != View::ScreenEdge && presentation.view != View::ScreenEdge;
+  const bool moved = docked && (old.edge != presentation.edge ||
+      old.flushWithEdge != presentation.flushWithEdge || fromX != to.x || fromY != to.y);
+  const auto side = [](Presentation::Edge edge) {
+    return edge == Presentation::Edge::Left || edge == Presentation::Edge::Right;
+  };
+  const bool rotates = side(old.edge) != side(presentation.edge);
+  const bool crossfade = shapeChanged || (rotates && (presentation.view == View::Bar ||
+      (presentation.autoHideAtEdge && !expanded)));
+  const auto settle = [this, target, source] {
     target.Opacity(1);
     target.RenderTransform(nullptr);
-    if (source != nullptr) {
+    if (source) {
       source.Opacity(0);
       source.RenderTransform(nullptr);
       source.Children().Clear();
     }
+    Motion::Stop(previewMotion_);
+  };
+  if (!source || !Motion::Enabled() || !(moved || shapeChanged)) {
+    settle();
     return;
   }
 
-  // 换边时让新外观从旧边的中点滑进来；只换形状时就地淡入并轻微放大。
-  const auto from = PreviewAnchor(previousView, previousEdge);
-  const auto to = PreviewAnchor(presentation.view, presentation.edge);
-  const bool glide = moved && presentation.view != View::ScreenEdge &&
-                     previousView != View::ScreenEdge;
-  const double dx = glide ? from.x - to.x : 0;
-  const double dy = glide ? from.y - to.y : 0;
-  const int duration = moved ? 300 : 170;
-  const double fromScale = moved ? 0.94 : 0.985;
-
+  const int duration = moved ? 320 : 225;
   Canvas::SetZIndex(target, 1);
-  if (source != nullptr) Canvas::SetZIndex(source, 0);
-
-  CompositeTransform offset;
-  offset.CenterX(to.x);
-  offset.CenterY(to.y);
-  offset.TranslateX(dx);
-  offset.TranslateY(dy);
-  offset.ScaleX(fromScale);
-  offset.ScaleY(fromScale);
-  target.RenderTransform(offset);
-  target.Opacity(0);
-
+  Canvas::SetZIndex(source, 0);
   Storyboard storyboard;
   SineEase fade;
-  fade.EasingMode(EasingMode::EaseOut);
-  Motion::Animate(storyboard, target, L"Opacity", 0, 1, duration, fade);
-  CubicEase settle;
-  settle.EasingMode(EasingMode::EaseOut);
-  Motion::Animate(storyboard, offset, L"ScaleX", fromScale, 1, duration + 40, settle);
-  Motion::Animate(storyboard, offset, L"ScaleY", fromScale, 1, duration + 40, settle);
-  if (glide) {
-    BackEase glideEase;
-    glideEase.Amplitude(0.12);
-    glideEase.EasingMode(EasingMode::EaseOut);
-    Motion::Animate(storyboard, offset, L"TranslateX", dx, 0, duration + 40, glideEase);
-    Motion::Animate(storyboard, offset, L"TranslateY", dy, 0, duration + 40, glideEase);
-  }
-  if (source != nullptr) {
-    SineEase leave;
-    leave.EasingMode(EasingMode::EaseIn);
-    Motion::Animate(storyboard, source, L"Opacity", source.Opacity(), 0, moved ? 130 : 90, leave);
-  }
+  fade.EasingMode(EasingMode::EaseInOut);
+  CubicEase travel;
+  travel.EasingMode(EasingMode::EaseInOut);
 
-  const uint64_t generation = previewGeneration_;
-  const Canvas outgoing = source;
-  storyboard.Completed([this, generation, target, outgoing](auto const& sender, auto const&) {
-    if (generation != previewGeneration_ || sender != previewMotion_) return;
-    target.RenderTransform(nullptr);
-    if (outgoing != nullptr) {
-      outgoing.Children().Clear();
-      outgoing.Opacity(0);
-      outgoing.RenderTransform(nullptr);
+  const auto translate = [&](const Canvas& layer, PreviewPoint anchor, bool incoming) {
+    CompositeTransform pose;
+    pose.CenterX(anchor.x);
+    pose.CenterY(anchor.y);
+    layer.RenderTransform(pose);
+    if (moved) {
+      const double endX = to.x - anchor.x;
+      const double endY = to.y - anchor.y;
+      Motion::Animate(storyboard, pose, L"TranslateX", fromX - anchor.x, endX, duration, travel);
+      Motion::Animate(storyboard, pose, L"TranslateY", fromY - anchor.y, endY, duration, travel);
     }
+    if (crossfade) {
+      const double fromScale = incoming ? 0.92 : 1.0;
+      const double toScale = incoming ? 1.0 : 0.94;
+      Motion::Animate(storyboard, pose, L"ScaleX", fromScale, toScale, duration, fade);
+      Motion::Animate(storyboard, pose, L"ScaleY", fromScale, toScale, duration, fade);
+    }
+  };
+  target.Opacity(1);
+  translate(target, to, true);
+  if (crossfade) {
+    translate(source, from, false);
+    Motion::Animate(storyboard, target, L"Opacity", 0, 1, duration, fade);
+    Motion::Animate(storyboard, source, L"Opacity", sourceOpacity, 0, duration, fade);
+  } else {
+    source.Opacity(0);
+    source.Children().Clear();
+  }
+  storyboard.Completed([this, settle](auto const& sender, auto const&) {
+    if (sender == previewMotion_) settle();
   });
   previewMotion_ = storyboard;
   previewMotion_.Begin();
