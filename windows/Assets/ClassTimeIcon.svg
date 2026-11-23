@@ -1,4 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <path fill="#8CB6EF" d="M2 2H30V22H22V30H2Z M24 24H30V30H24Z"/>
-  <path fill="#FFFFFF" d="M12 8H16V16H24V20H12Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.78" y2="1">
+      <stop stop-color="#ACD6FF"/>
+      <stop offset="1" stop-color="#649AE0"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="4.5" width="42" height="42" rx="11" fill="#275B9F" opacity=".26"/>
+  <rect x="3" y="2.5" width="42" height="42" rx="11" fill="url(#tile)"/>
+  <rect x="3.5" y="3" width="41" height="41" rx="10.5" fill="none"
+        stroke="#316DB1" stroke-opacity=".28"/>
+  <circle cx="24" cy="24.4" r="15.25" fill="#285A94" opacity=".20"/>
+  <circle cx="24" cy="23.5" r="15.25" fill="#FAFCFF"/>
+  <circle cx="24" cy="23.5" r="11.75" fill="none" stroke="#DCE9F8" stroke-width="1.5"/>
+  <path d="M24 11.75A11.75 11.75 0 0 1 35.04 27.52" fill="none"
+        stroke="#437DC3" stroke-width="2" stroke-linecap="round"/>
+  <path d="M19.6 19.5 24 23.5 30.2 19.9" fill="none" stroke="#224C7D"
+        stroke-width="2.65" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
