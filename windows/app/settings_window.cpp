@@ -5,6 +5,7 @@
 #include "resource.h"
 #include "services.h"
 #include "ui_motion.h"
+#include "widget_appearance.h"
 
 #include <initializer_list>
 #include <limits>
@@ -1702,6 +1703,7 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
   const auto track = color(82, 101, 123);
   const auto face = color(242, 247, 253);
   const auto ink = color(30, 50, 72);
+  const auto accentSurface = WidgetAppearance::Surface(face.Color(), accent.Color());
   const auto place = [&](const UIElement& item, double x, double y) {
     Canvas::SetLeft(item, x);
     Canvas::SetTop(item, y);
@@ -1712,10 +1714,31 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
     Shapes::Rectangle shape;
     shape.Width(width);
     shape.Height(height);
-    shape.RadiusX(radius);
-    shape.RadiusY(radius);
+    const double corner = std::min({radius, width / 2, height / 2});
+    shape.RadiusX(corner);
+    shape.RadiusY(corner);
     shape.Fill(brush);
     place(shape, x, y);
+  };
+  const auto panel = [&](double x, double y, double width, double height, CornerRadius corners) {
+    Border shell;
+    shell.Width(width);
+    shell.Height(height);
+    shell.CornerRadius(corners);
+    shell.Background(accentSurface);
+    shell.BorderThickness(Thickness{0.75, 0.75, 0.75, 0.75});
+    shell.BorderBrush(color(203, 219, 238));
+    place(shell, x, y);
+  };
+  const auto edgeFill = [&](double x, double y, double width, double height,
+                            Presentation::Edge from, bool hasTip) {
+    Border fill;
+    fill.Width(width);
+    fill.Height(height);
+    fill.Background(accent);
+    const double radius = hasTip ? std::min(width, height) / 2 : 0;
+    fill.CornerRadius(WidgetAppearance::DockCorners(radius, from, true, 0));
+    place(fill, x, y);
   };
   const auto text = [&](const wchar_t* label, double size, const Brush& brush, double y) {
     auto block = MakeText(label, size, brush);
@@ -1754,14 +1777,16 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
     rect(left, top + line, line, height - 2 * line, track);
     const double perimeter = 2 * (width + height - 2 * line);
     double filled = perimeter * (allDay ? 0.62 : 0.29);
-    rect(left, top, std::min(filled, width), line, accent);
+    edgeFill(left, top, std::min(filled, width), line, Presentation::Edge::Left, filled < width);
     filled -= width;
     if (filled > 0) {
-      rect(left + width - line, top + line, line, std::min(filled, height - line), accent);
+      edgeFill(left + width - line, top + line, line, std::min(filled, height - line),
+               Presentation::Edge::Top, filled < height - line);
       filled -= height - line;
     }
     if (filled > 0) {
-      rect(left + width - line - filled, top + height - line, filled, line, accent);
+      edgeFill(left + width - line - filled, top + height - line, filled, line,
+               Presentation::Edge::Right, true);
     }
     return;
   }
@@ -1770,11 +1795,11 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
     if (side) {
       const double x = dockLeft ? left + 3 : left + width - 12;
       const double y = top + height / 2 - 26;
-      rect(x, y, 9, 52, face, 4);
+      panel(x, y, 9, 52, CornerRadius{4.5, 4.5, 4.5, 4.5});
       rect(x + 3, y + 16, 3, 20, accent, 1.5);
     } else {
       const double y = dockTop ? top : top + height - 9;
-      rect(center - 26, y, 52, 9, face, 4);
+      panel(center - 26, y, 52, 9, CornerRadius{4.5, 4.5, 4.5, 4.5});
       rect(center - 10, y + 3, 20, 3, accent, 1.5);
     }
     text(L"悬停展开", 12, face, 67);
@@ -1785,7 +1810,7 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
       const double inset = flush ? 2 : 8;
       const double barX = dockLeft ? left + inset : left + width - inset - 21;
       const double barY = top + height / 2 - 55;
-      rect(barX, barY, 21, 110, face, 7);
+      panel(barX, barY, 21, 110, WidgetAppearance::DockCorners(10.5, presentation.edge, flush, 3));
       const int segments = allDay ? 6 : 3;
       const double innerTop = barY + 8;
       const double innerHeight = 94;
@@ -1794,7 +1819,7 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
       const int current = allDay ? 3 : 1;
       for (int i = 0; i < segments; ++i) {
         const double y = innerTop + i * (segmentHeight + gap);
-        rect(barX + 6, y, 9, segmentHeight, color(194, 207, 223), 4.5);
+        rect(barX + 6, y, 9, segmentHeight, color(202, 221, 242), 4.5);
         if (i <= current) {
           const double fill = i == current ? .46 : 1;
           rect(barX + 6, y, 9, segmentHeight * fill, accent, 4.5);
@@ -1807,10 +1832,11 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
     constexpr double segmentWidth = 34;
     constexpr double gap = 5;
     const double start = center - (segments * (segmentWidth + gap) - gap) / 2;
-    rect(start - 8, y, 2 * (center - start) + 16, 21, face, 7);
+    panel(start - 10, y, 2 * (center - start) + 20, 21,
+          WidgetAppearance::DockCorners(10.5, presentation.edge, flush, 3));
     for (int i = 0; i < segments; ++i) {
       const double x = start + i * (segmentWidth + gap);
-      rect(x, y + 8, segmentWidth, 5, color(194, 207, 223), 2.5);
+      rect(x, y + 8, segmentWidth, 5, color(202, 221, 242), 2.5);
       const int current = allDay ? 3 : 1;
       if (i <= current) {
         rect(x, y + 8, segmentWidth * (i == current ? .46 : 1), 5, accent, 2.5);
@@ -1819,7 +1845,7 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
     return;
   }
 
-  constexpr float radius = 36;
+  constexpr float radius = 36.5f;
   const float y = static_cast<float>(side ? top + height / 2
                                           : (dockTop ? top + (flush ? 46 : 51)
                                                      : top + height - (flush ? 46 : 51)));
@@ -1828,8 +1854,14 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
   Shapes::Ellipse dial;
   dial.Width(88);
   dial.Height(88);
-  dial.Fill(face);
+  dial.Fill(accentSurface);
   place(dial, cx - 44, y - 44);
+  Shapes::Ellipse bezel;
+  bezel.Width(84);
+  bezel.Height(84);
+  bezel.Stroke(color(206, 221, 239));
+  bezel.StrokeThickness(0.75);
+  place(bezel, cx - 42, y - 42);
   Shapes::Ellipse outline;
   outline.Width(2 * radius + 4);
   outline.Height(2 * radius + 4);
@@ -1843,7 +1875,7 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
   arc.Size({radius, radius});
   arc.SweepDirection(SweepDirection::Clockwise);
   arc.IsLargeArc(true);
-  arc.Point({static_cast<float>(cx) - 22, y + 28.5f});
+  arc.Point({static_cast<float>(cx) - 22.3f, y + 28.9f});
   figure.Segments().Append(arc);
   geometry.Figures().Append(figure);
   Shapes::Path progress;

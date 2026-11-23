@@ -108,6 +108,7 @@ class OverlayWindow {
     winrt::Microsoft::UI::Xaml::Shapes::Rectangle track{nullptr};
     winrt::Microsoft::UI::Xaml::Shapes::Rectangle fill{nullptr};
     double length = 0;
+    double thickness = 0;
   };
   std::vector<SegmentVisual> visuals_;
   std::string visualSignature_;
@@ -127,8 +128,9 @@ class OverlayWindow {
   double dpiScale_ = 1.0;
   int windowWidth_ = 0;
   int windowHeight_ = 0;
-  RECT ringRegionBounds_{};
-  bool sharpWindowCorners_ = false;
+  RECT windowRegionBounds_{};
+  std::array<int, 4> windowRegionRadii_{};
+  Layer windowRegionLayer_ = Layer::None;
   std::optional<uint32_t> dragPointer_;
   POINT dragStart_{};
   POINT dragOrigin_{};

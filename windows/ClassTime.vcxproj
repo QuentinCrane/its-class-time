@@ -127,6 +127,7 @@
     <ClInclude Include="app\services.h" />
     <ClInclude Include="app\tray_icon.h" />
     <ClInclude Include="app\ui_motion.h" />
+    <ClInclude Include="app\widget_appearance.h" />
     <ClInclude Include="engine\include\classtime\config.h" />
     <ClInclude Include="engine\include\classtime\edit_ops.h" />
     <ClInclude Include="engine\include\classtime\json.h" />

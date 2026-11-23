@@ -2,6 +2,7 @@
 #include "overlay_window.h"
 #include "services.h"
 #include "ui_motion.h"
+#include "widget_appearance.h"
 
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Interop.h>
@@ -25,10 +26,13 @@ constexpr double kSideBarThicknessDip = 34.0;
 constexpr double kSideBarLengthDip = 420.0;
 constexpr double kBarHostThicknessDip = 24.0;
 constexpr double kRingDiameterDip = 156.0;
-constexpr double kBarInsetDip = 8.0;
+constexpr double kBarInsetDip = 17;
+constexpr double kSurfaceStrokeDip = 1;
+constexpr Thickness kSurfaceBorder{kSurfaceStrokeDip, kSurfaceStrokeDip,
+                                   kSurfaceStrokeDip, kSurfaceStrokeDip};
 constexpr float kRingCenter = kRingDiameterDip / 2;
-constexpr float kRingRadius = kRingCenter - 10;
-constexpr double kRingStroke = 7.0;
+constexpr float kRingRadius = kRingCenter - 13;
+constexpr double kRingStroke = 6.5;
 constexpr double kDetailWidth = 280.0;
 constexpr double kDetailTrackWidth = 194.0;
 constexpr int kSnapInsetDip = 12;
@@ -89,10 +93,72 @@ POINT EdgeShift(classtime::PresentationSettings::Edge edge, int distance) {
   }
 }
 
+HRGN RoundedWindowRegion(const RECT& bounds, const std::array<int, 4>& radii) {
+  const auto rounded = [&](int r) {
+    return r > 0 ? CreateRoundRectRgn(0, 0, bounds.right + 1, bounds.bottom + 1, 2 * r, 2 * r)
+                 : CreateRectRgnIndirect(&bounds);
+  };
+  const int radius = *std::max_element(radii.begin(), radii.end());
+  HRGN region = rounded(radius);
+  if (!region) return nullptr;
+  const RECT corners[] = {
+      {0, 0, radius, radius},
+      {bounds.right - radius, 0, bounds.right, radius},
+      {bounds.right - radius, bounds.bottom - radius, bounds.right, bounds.bottom},
+      {0, bounds.bottom - radius, radius, bounds.bottom},
+  };
+  // Replace only the corners whose radius differs from the main capsule.
+  for (size_t i = 0; i < radii.size(); ++i) {
+    if (radii[i] == radius) continue;
+    HRGN corner = CreateRectRgnIndirect(&corners[i]);
+    HRGN smaller = rounded(radii[i]);
+    const bool ok = corner && smaller &&
+                    CombineRgn(smaller, smaller, corner, RGN_AND) != ERROR &&
+                    CombineRgn(region, region, smaller, RGN_OR) != ERROR;
+    if (corner) DeleteObject(corner);
+    if (smaller) DeleteObject(smaller);
+    if (!ok) {
+      DeleteObject(region);
+      return nullptr;
+    }
+  }
+  return region;
+}
+
 uint32_t PremultipliedBgra(Windows::UI::Color color) {
   const uint32_t alpha = color.A;
   return (alpha << 24) | ((color.R * alpha / 255) << 16) |
          ((color.G * alpha / 255) << 8) | (color.B * alpha / 255);
+}
+
+uint32_t BlendEdgeColors(uint32_t fill, uint32_t track, double coverage) {
+  uint32_t result = 0;
+  for (int shift : {0, 8, 16, 24}) {
+    const auto from = static_cast<double>((track >> shift) & 255);
+    const auto to = static_cast<double>((fill >> shift) & 255);
+    const auto value = static_cast<uint32_t>(std::lround(from + (to - from) * coverage));
+    result |= value << shift;
+  }
+  return result;
+}
+
+void RoundProgressTip(uint32_t* pixels, SIZE size, bool horizontal, bool reverse,
+                      int filledPixels, uint32_t fill, uint32_t track) {
+  const int length = horizontal ? size.cx : size.cy;
+  if (filledPixels <= 0 || filledPixels >= length) return;
+  const int thickness = horizontal ? size.cy : size.cx;
+  const double radius = std::min(thickness / 2.0, static_cast<double>(filledPixels));
+  const double start = filledPixels - radius;
+  for (int cross = 0; cross < thickness; ++cross) {
+    const double normalized = (cross + 0.5) / (thickness / 2.0) - 1;
+    const double tip = start + radius * std::sqrt(1 - normalized * normalized);
+    for (int along = static_cast<int>(std::floor(start)); along < filledPixels; ++along) {
+      const int position = reverse ? length - 1 - along : along;
+      auto& pixel = horizontal ? pixels[cross * size.cx + position]
+                               : pixels[position * size.cx + cross];
+      pixel = BlendEdgeColors(fill, track, std::clamp(tip - along, 0.0, 1.0));
+    }
+  }
 }
 
 bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool reverse,
@@ -128,6 +194,8 @@ bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool revers
         std::fill_n(pixels, width * first, reverse ? track : fill);
         std::fill_n(pixels + width * first, width * (size.cy - first), reverse ? fill : track);
       }
+      RoundProgressTip(static_cast<uint32_t*>(bitmapData), size, horizontal, reverse,
+                       filledPixels, fill, track);
       POINT origin{};
       POINT position{bounds.left, bounds.top};
       // SourceConstantAlpha 与逐像素透明度相乘：淡入淡出只需重提交，不必改像素。
@@ -218,11 +286,14 @@ void OverlayWindow::CreateNativeWindow() {
   BuildDetailCard();
   const auto palette = CurrentPalette();
   edgeHandle_ = Border();
-  edgeHandle_.Background(SolidColorBrush(palette.background));
+  edgeHandle_.Background(WidgetAppearance::Surface(palette.background, palette.accent));
+  edgeHandle_.CornerRadius({6, 6, 6, 6});
+  edgeHandle_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 28)));
+  edgeHandle_.BorderThickness(kSurfaceBorder);
   edgeGrip_ = Border();
   edgeGrip_.Width(34);
   edgeGrip_.Height(3);
-  edgeGrip_.CornerRadius(CornerRadius{2, 2, 2, 2});
+  edgeGrip_.CornerRadius(CornerRadius{1.5, 1.5, 1.5, 1.5});
   edgeGrip_.HorizontalAlignment(HorizontalAlignment::Center);
   edgeGrip_.VerticalAlignment(VerticalAlignment::Center);
   edgeGrip_.Background(SolidColorBrush(WithAlpha(palette.accent, 210)));
@@ -236,10 +307,19 @@ void OverlayWindow::CreateNativeWindow() {
 
   hwnd_ = reinterpret_cast<HWND>(winrt::Microsoft::UI::GetWindowFromWindowId(appWindow.Id()));
   if (hwnd_ != nullptr) {
-    const LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
-    SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
-    DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_ROUND;
-    DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
+    // The presenter can leave a dialog frame around the XAML content.
+    const LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_STYLE);
+    SetWindowLongPtrW(hwnd_, GWL_STYLE, style & ~(WS_CAPTION | WS_THICKFRAME));
+    const LONG_PTR exStyle = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
+    SetWindowLongPtrW(hwnd_, GWL_EXSTYLE,
+                      (exStyle & ~(WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE)) |
+                          WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    const COLORREF border = DWMWA_COLOR_NONE;
+    DwmSetWindowAttribute(hwnd_, DWMWA_BORDER_COLOR, &border, sizeof(border));
+    const DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_DONOTROUND;
+    DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
   }
   window_.SizeChanged([this](auto const&, auto const&) { UpdateWindowShape(); });
 
@@ -250,8 +330,10 @@ void OverlayWindow::BuildBar() {
   const Palette palette = CurrentPalette();
 
   barRoot_ = Border();
-  barRoot_.CornerRadius(CornerRadius{12, 12, 12, 12});
-  barRoot_.Background(SolidColorBrush(palette.background));
+  barRoot_.CornerRadius(WidgetAppearance::DockCorners(16, edge_, flushWithEdge_));
+  barRoot_.Background(WidgetAppearance::Surface(palette.background, palette.accent));
+  barRoot_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 26)));
+  barRoot_.BorderThickness(kSurfaceBorder);
   barRoot_.Padding(Thickness{kBarInsetDip, 0, kBarInsetDip, 0});
 
   segmentPanel_ = StackPanel();
@@ -266,7 +348,16 @@ void OverlayWindow::BuildRing() {
   auto dial = Canvas();
   dial.Width(kRingDiameterDip);
   dial.Height(kRingDiameterDip);
-  dial.Background(SolidColorBrush(palette.background));
+  dial.Background(WidgetAppearance::Surface(palette.background, palette.accent));
+
+  Shapes::Ellipse bezel;
+  bezel.Width(kRingDiameterDip - 7);
+  bezel.Height(kRingDiameterDip - 7);
+  bezel.Stroke(SolidColorBrush(WithAlpha(palette.foreground, 25)));
+  bezel.StrokeThickness(kSurfaceStrokeDip);
+  Canvas::SetLeft(bezel, 3.5);
+  Canvas::SetTop(bezel, 3.5);
+  dial.Children().Append(bezel);
 
   EllipseGeometry circle;
   circle.Center({kRingCenter, kRingCenter});
@@ -274,7 +365,7 @@ void OverlayWindow::BuildRing() {
   circle.RadiusY(kRingRadius);
   Shapes::Path track;
   track.Data(circle);
-  track.Stroke(SolidColorBrush(WithAlpha(palette.foreground, 32)));
+  track.Stroke(SolidColorBrush(WithAlpha(palette.foreground, 24)));
   track.StrokeThickness(kRingStroke);
   dial.Children().Append(track);
 
@@ -332,10 +423,10 @@ void OverlayWindow::BuildDetailCard() {
   detailCard_ = Border();
   detailCard_.Width(kDetailWidth);
   detailCard_.Padding(Thickness{14, 12, 14, 12});
-  detailCard_.Background(SolidColorBrush(palette.background));
-  detailCard_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 42)));
+  detailCard_.Background(WidgetAppearance::Surface(palette.background, palette.accent));
+  detailCard_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 30)));
   detailCard_.BorderThickness(Thickness{1, 1, 1, 1});
-  detailCard_.CornerRadius(CornerRadius{14, 14, 14, 14});
+  detailCard_.CornerRadius(CornerRadius{19, 19, 19, 19});
 
   StackPanel content;
   content.Spacing(7);
@@ -1275,55 +1366,50 @@ void OverlayWindow::ApplyLayoutStyle() {
                         : Thickness{kBarInsetDip, 0, kBarInsetDip, 0});
   edgeGrip_.Width(side ? 3 : 34);
   edgeGrip_.Height(side ? 34 : 3);
-  // 紧贴边缘时把靠边一侧的圆角削平，视觉上像从任务栏/屏幕边缘长出来。
-  CornerRadius corner{12, 12, 12, 12};
-  if (flushWithEdge_) {
-    switch (edge_) {
-      case classtime::PresentationSettings::Edge::Top: corner = {0, 0, 12, 12}; break;
-      case classtime::PresentationSettings::Edge::Left: corner = {0, 12, 12, 0}; break;
-      case classtime::PresentationSettings::Edge::Right: corner = {12, 0, 0, 12}; break;
-      default: corner = {12, 12, 0, 0}; break;
-    }
-  }
-  barRoot_.CornerRadius(corner);
+  const double radius = (side ? kSideBarThicknessDip : kBarHeightDip) / 2;
+  barRoot_.CornerRadius(WidgetAppearance::DockCorners(radius, edge_, flushWithEdge_));
 }
 
 void OverlayWindow::UpdateWindowShape() {
   if (!hwnd_) return;
-  RECT desired{};
   const Layer layer = CurrentLayer();
-  if (layer == Layer::Ring) {
-    RECT window{};
-    if (!GetWindowRect(hwnd_, &window)) return;
-    const int width = window.right - window.left;
-    const int height = window.bottom - window.top;
-    const int diameter = std::min(width, height);
-    if (diameter <= 0) return;
-    // 给原生窗口边线留出裁剪余量，避免表盘切点出现残边。
-    const int inset = std::min<int>(diameter / 8, std::lround(2.0 * GetDpiForWindow(hwnd_) / 96.0));
-    desired.left = (width - diameter) / 2 + inset;
-    desired.top = (height - diameter) / 2 + inset;
-    desired.right = desired.left + diameter - 2 * inset;
-    desired.bottom = desired.top + diameter - 2 * inset;
-  }
-  // 紧贴边缘的横条需要直角落到任务栏/屏幕边缘；圆环本身用椭圆裁剪。
-  const bool wantSharp = !IsRectEmpty(&desired) || (layer == Layer::Bar && flushWithEdge_);
-  if (EqualRect(&desired, &ringRegionBounds_) && wantSharp == sharpWindowCorners_) return;
+  if (layer == Layer::None) return;
 
-  HRGN region = nullptr;
-  if (!IsRectEmpty(&desired)) {
-    region = CreateEllipticRgn(desired.left, desired.top, desired.right, desired.bottom);
-    if (!region) return;
+  RECT window{};
+  if (!GetWindowRect(hwnd_, &window)) return;
+  const int width = window.right - window.left;
+  const int height = window.bottom - window.top;
+  const int diameter = std::min(width, height);
+  if (diameter <= 0) return;
+  const double scale = GetDpiForWindow(hwnd_) / 96.0;
+  RECT bounds{0, 0, width, height};
+  std::array<int, 4> radii{};
+  if (layer == Layer::Ring) {
+    const int inset = std::min<int>(diameter / 8, std::lround(2.0 * scale));
+    bounds.left = (width - diameter) / 2 + inset;
+    bounds.top = (height - diameter) / 2 + inset;
+    bounds.right = bounds.left + diameter - 2 * inset;
+    bounds.bottom = bounds.top + diameter - 2 * inset;
+  } else {
+    const auto corners = layer == Layer::Handle ? edgeHandle_.CornerRadius() : barRoot_.CornerRadius();
+    const auto pixelRadius = [&](double dip) {
+      return std::min(diameter / 2, static_cast<int>(std::lround(dip * scale)));
+    };
+    radii = {pixelRadius(corners.TopLeft), pixelRadius(corners.TopRight),
+             pixelRadius(corners.BottomRight), pixelRadius(corners.BottomLeft)};
   }
+  if (layer == windowRegionLayer_ && EqualRect(&bounds, &windowRegionBounds_) &&
+      radii == windowRegionRadii_) return;
+
+  HRGN region = layer == Layer::Ring
+                    ? CreateEllipticRgnIndirect(&bounds)
+                    : RoundedWindowRegion(bounds, radii);
+  if (!region) return;
   if (SetWindowRgn(hwnd_, region, IsWindowVisible(hwnd_))) {
-    ringRegionBounds_ = desired;
-    sharpWindowCorners_ = wantSharp;
-    // DWM 的外框独立于窗口裁剪区域：圆环和紧贴边缘时都不要方形外框。
-    const COLORREF border = wantSharp ? DWMWA_COLOR_NONE : DWMWA_COLOR_DEFAULT;
-    DwmSetWindowAttribute(hwnd_, DWMWA_BORDER_COLOR, &border, sizeof(border));
-    const auto corners = wantSharp ? DWMWCP_DONOTROUND : DWMWCP_ROUND;
-    DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
-  } else if (region) {
+    windowRegionLayer_ = layer;
+    windowRegionBounds_ = bounds;
+    windowRegionRadii_ = radii;
+  } else {
     DeleteObject(region);
   }
 }
@@ -1531,10 +1617,10 @@ void OverlayWindow::RefreshBar() {
     } else {
       int totalMinutes = 0;
       for (const auto& segment : visible) totalMinutes += std::max(1, segment.DurationMinutes());
-      const double contentLength =
-          vertical ? std::max(1.0, clientHeight / dpiScale_ - 2 * kBarInsetDip)
-                   : std::max(1.0, clientWidth / dpiScale_ - 2 * kBarInsetDip);
-      const double gap = std::min(4.0, contentLength / (2.0 * visible.size()));
+      const double contentLength = std::max(
+          1.0, (vertical ? clientHeight : clientWidth) / dpiScale_ -
+                   2 * (kBarInsetDip + kSurfaceStrokeDip));
+      const double gap = std::min(5.0, contentLength / (2.0 * visible.size()));
       segmentPanel_.Spacing(gap);
       const double available = contentLength - gap * (visible.size() - 1);
       const double minimum = std::min(vertical ? 4.0 : 6.0, available / (2.0 * visible.size()));
@@ -1558,11 +1644,14 @@ void OverlayWindow::RefreshBar() {
         }
         visual.host.VerticalAlignment(VerticalAlignment::Center);
 
-        const double thickness = segment.kind == classtime::SegmentKind::Break ? 6 : 9;
+        const double thickness = segment.kind == classtime::SegmentKind::Break ? 5 : 8;
+        visual.thickness = thickness;
+        const double radius = std::min(length, thickness) / 2;
+        const auto color = KindColor(palette, segment.kind);
         visual.track = Shapes::Rectangle();
-        visual.track.RadiusX(4);
-        visual.track.RadiusY(4);
-        visual.track.Fill(SolidColorBrush(WithAlpha(palette.foreground, 26)));
+        visual.track.RadiusX(radius);
+        visual.track.RadiusY(radius);
+        visual.track.Fill(SolidColorBrush(WithAlpha(color, 39)));
         if (vertical) {
           visual.track.Width(thickness);
           visual.track.HorizontalAlignment(HorizontalAlignment::Center);
@@ -1575,9 +1664,9 @@ void OverlayWindow::RefreshBar() {
         visual.host.Children().Append(visual.track);
 
         visual.fill = Shapes::Rectangle();
-        visual.fill.RadiusX(4);
-        visual.fill.RadiusY(4);
-        visual.fill.Fill(SolidColorBrush(KindColor(palette, segment.kind)));
+        visual.fill.RadiusX(radius);
+        visual.fill.RadiusY(radius);
+        visual.fill.Fill(SolidColorBrush(color));
         if (vertical) {
           // 填充和轨道同宽，否则会铺满整个 24 DIP 的宿主，看起来像一根粗柱子。
           visual.fill.Width(thickness);
@@ -1612,10 +1701,15 @@ void OverlayWindow::RefreshBar() {
                now.hour * 3600 + now.minute * 60 + now.second) {
       progress = 1.0;
     }
+    const auto& visual = visuals_[i];
+    const double filled = visual.length * progress;
+    const double radius = std::min(filled, visual.thickness) / 2;
+    visual.fill.RadiusX(radius);
+    visual.fill.RadiusY(radius);
     if (vertical) {
-      visuals_[i].fill.Height(visuals_[i].length * progress);
+      visual.fill.Height(filled);
     } else {
-      visuals_[i].fill.Width(visuals_[i].length * progress);
+      visual.fill.Width(filled);
     }
   }
 }
