@@ -128,17 +128,51 @@ Border MakeChip(const std::wstring& text, bool accent) {
   return chip;
 }
 
-// 两栏正文：右侧为固定宽度的预览/摘要列；窗口较窄时收起，退化为单栏。
-void BindResponsiveColumns(Grid const& host, ColumnDefinition const& rightColumn,
-                           FrameworkElement const& rightCard, double fixedWidth,
-                           double compactAt) {
-  host.SizeChanged([host, rightColumn, rightCard, fixedWidth,
-                    compactAt](auto const&, SizeChangedEventArgs const& args) {
-    const bool compact = args.NewSize().Width < compactAt;
-    rightColumn.Width(GridLengthHelper::FromValueAndType(compact ? 0 : fixedWidth,
-                                                        GridUnitType::Pixel));
-    rightCard.Visibility(compact ? Visibility::Collapsed : Visibility::Visible);
-    host.ColumnSpacing(compact ? 0 : 12);
+// 窄窗口把辅助卡片放到下一行，保留预览、检查和版本入口。
+Grid MakeAdaptiveColumns(FrameworkElement const& primary, FrameworkElement const& secondary,
+                         double secondaryWidth, double twoColumnWidth) {
+  constexpr double spacing = 12;
+  Grid host;
+  ColumnDefinition mainColumn;
+  mainColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+  ColumnDefinition sideColumn;
+  const auto sideLength = GridLengthHelper::FromValueAndType(secondaryWidth, GridUnitType::Pixel);
+  sideColumn.Width(sideLength);
+  host.ColumnDefinitions().Append(mainColumn);
+  host.ColumnDefinitions().Append(sideColumn);
+  for (int i = 0; i < 2; ++i) {
+    RowDefinition row;
+    row.Height(GridLengthHelper::Auto());
+    host.RowDefinitions().Append(row);
+  }
+  host.ColumnSpacing(spacing);
+  secondary.VerticalAlignment(VerticalAlignment::Top);
+  Grid::SetColumn(secondary, 1);
+  host.Children().Append(primary);
+  host.Children().Append(secondary);
+
+  host.SizeChanged([secondary, sideColumn, sideLength, twoColumnWidth, spacing](
+                       IInspectable const& sender, SizeChangedEventArgs const& args) {
+    const bool stacked = args.NewSize().Width < twoColumnWidth;
+    const int row = stacked ? 1 : 0;
+    if (Grid::GetRow(secondary) == row) return;
+    const auto grid = sender.as<Grid>();
+    Grid::SetRow(secondary, row);
+    Grid::SetColumn(secondary, stacked ? 0 : 1);
+    sideColumn.Width(stacked ? GridLengthHelper::FromValueAndType(0, GridUnitType::Pixel)
+                             : sideLength);
+    grid.ColumnSpacing(stacked ? 0 : spacing);
+    grid.RowSpacing(stacked ? spacing : 0);
+  });
+  return host;
+}
+
+void BindActionRow(StackPanel const& row, double horizontalWidth) {
+  row.Orientation(Orientation::Horizontal);
+  row.SizeChanged([horizontalWidth](IInspectable const& sender, SizeChangedEventArgs const& args) {
+    sender.as<StackPanel>().Orientation(args.NewSize().Width < horizontalWidth
+                                          ? Orientation::Vertical
+                                          : Orientation::Horizontal);
   });
 }
 
@@ -339,8 +373,11 @@ void SettingsWindow::Build() {
     const auto area = Microsoft::UI::Windowing::DisplayArea::GetFromWindowId(
         appWindow.Id(), Microsoft::UI::Windowing::DisplayAreaFallback::Primary);
     const auto work = area.WorkArea();
-    appWindow.MoveAndResize({work.X + (work.Width - width) / 2, work.Y + (work.Height - height) / 3,
-                             width, height});
+    const int initialWidth = std::min(width, work.Width);
+    const int initialHeight = std::min(height, work.Height);
+    appWindow.MoveAndResize({work.X + (work.Width - initialWidth) / 2,
+                             work.Y + (work.Height - initialHeight) / 3,
+                             initialWidth, initialHeight});
   } catch (...) {
     appWindow.Resize({width, height});
   }
@@ -359,8 +396,10 @@ void SettingsWindow::Build() {
   nav_ = NavigationView();
   nav_.IsSettingsVisible(false);
   nav_.IsBackButtonVisible(NavigationViewBackButtonVisible::Collapsed);
-  nav_.PaneDisplayMode(NavigationViewPaneDisplayMode::Left);
+  nav_.PaneDisplayMode(NavigationViewPaneDisplayMode::Auto);
   nav_.OpenPaneLength(216);
+  nav_.CompactPaneLength(52);
+  nav_.CompactModeThresholdWidth(0);
   root.Children().Append(nav_);
 
   struct Section {
@@ -391,13 +430,12 @@ void SettingsWindow::Build() {
   auto makePage = [&](ScrollViewer& scroll) {
     ScrollViewer viewer;
     viewer.Visibility(Visibility::Collapsed);
-    // 内容列固定最大宽度并左对齐；若用 Stretch，宽窗口下 MaxWidth 会把整列居中，
-    // 左侧就会空出一大块。
-    viewer.HorizontalContentAlignment(HorizontalAlignment::Left);
+    viewer.HorizontalScrollMode(ScrollMode::Disabled);
+    viewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
+    viewer.HorizontalContentAlignment(HorizontalAlignment::Stretch);
     auto stack = StackPanel();
     stack.MaxWidth(980);
     stack.Spacing(16);
-    stack.HorizontalAlignment(HorizontalAlignment::Left);
     viewer.Content(stack);
     content.Children().Append(viewer);
     scroll = viewer;
@@ -446,16 +484,6 @@ void SettingsWindow::Build() {
   }
 
   {
-    // 主操作区（日历最大化）+ 右侧今日概览；窄窗口时概览收起。
-    scheduleBody_ = Grid();
-    auto mainColumn = ColumnDefinition();
-    mainColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-    auto overviewColumn = ColumnDefinition();
-    overviewColumn.Width(GridLengthHelper::FromValueAndType(300, GridUnitType::Pixel));
-    scheduleBody_.ColumnDefinitions().Append(mainColumn);
-    scheduleBody_.ColumnDefinitions().Append(overviewColumn);
-    scheduleBody_.ColumnSpacing(12);
-
     auto card = MakeCard();
     auto stack = StackPanel();
     stack.Spacing(14);
@@ -472,7 +500,7 @@ void SettingsWindow::Build() {
     label.VerticalAlignment(VerticalAlignment::Center);
     templateRow.Children().Append(label);
     templateCombo_ = ComboBox();
-    templateCombo_.MinWidth(240);
+    templateCombo_.HorizontalAlignment(HorizontalAlignment::Stretch);
     Grid::SetColumn(templateCombo_, 1);
     templateRow.Children().Append(templateCombo_);
     Add(stack, templateRow);
@@ -481,9 +509,10 @@ void SettingsWindow::Build() {
     Add(stack, templateStatus_);
 
     Add(stack, MakeText(L"生效星期", 14));
-    weekdayPanel_ = StackPanel();
+    weekdayPanel_ = VariableSizedWrapGrid();
     weekdayPanel_.Orientation(Orientation::Horizontal);
-    weekdayPanel_.Spacing(4);
+    weekdayPanel_.ItemWidth(52);
+    weekdayPanel_.ItemHeight(34);
     Add(stack, weekdayPanel_);
     Add(stack, MakeSubtitle(L"所勾选的星期使用同一份作息模板。"));
 
@@ -498,15 +527,15 @@ void SettingsWindow::Build() {
     timetableScroll_ = ScrollViewer();
     timetableScroll_.HorizontalScrollMode(ScrollMode::Enabled);
     timetableScroll_.HorizontalScrollBarVisibility(ScrollBarVisibility::Auto);
-    timetableScroll_.VerticalScrollMode(ScrollMode::Disabled);
-    timetableScroll_.VerticalScrollBarVisibility(ScrollBarVisibility::Disabled);
+    timetableScroll_.VerticalScrollMode(ScrollMode::Enabled);
+    timetableScroll_.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
+    timetableScroll_.MaxHeight(430);
     Automation::AutomationProperties::SetName(timetableScroll_, L"课表预览");
 
     segmentList_ = StackPanel();
     segmentList_.Spacing(4);
 
     auto buttons = StackPanel();
-    buttons.Orientation(Orientation::Horizontal);
     buttons.Spacing(8);
     auto add = Button();
     add.Content(box_value(hstring(L"新增时段")));
@@ -524,13 +553,13 @@ void SettingsWindow::Build() {
     Add(buttons, add);
     Add(buttons, restore);
     Add(buttons, clearTodayButton_);
+    BindActionRow(buttons, 350);
     Add(stack, buttons);
-    Add(stack, MakeText(L"时段列表", 14));
+    Add(stack, timetableScroll_);
+    Add(stack, MakeCardTitle(L"时段列表"));
     Add(stack, segmentList_);
 
     card.Child(stack);
-    Grid::SetColumn(card, 0);
-    scheduleBody_.Children().Append(card);
 
     auto overviewCard = MakeCard();
     overviewCard.Padding(Thickness{14, 14, 14, 14});
@@ -541,11 +570,7 @@ void SettingsWindow::Build() {
     todayOverview_.Spacing(6);
     Add(overviewStack, todayOverview_);
     overviewCard.Child(overviewStack);
-    Grid::SetColumn(overviewCard, 1);
-    scheduleBody_.Children().Append(overviewCard);
-    BindResponsiveColumns(scheduleBody_, overviewColumn, overviewCard, 300, 880);
-
-    Add(scheduleStack, scheduleBody_);
+    Add(scheduleStack, MakeAdaptiveColumns(card, overviewCard, 300, 902));
   }
 
   // —— 显示与位置 ——
@@ -554,15 +579,6 @@ void SettingsWindow::Build() {
   Add(displayStack, MakeSubtitle(L"选择桌面进度表现形式与屏幕贴边位置。"));
   {
     // 左栏配置，右栏实时预览；窄窗口时预览收起、配置占满整行。
-    displayBody_ = Grid();
-    auto configColumn = ColumnDefinition();
-    configColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-    auto previewColumn = ColumnDefinition();
-    previewColumn.Width(GridLengthHelper::FromValueAndType(320, GridUnitType::Pixel));
-    displayBody_.ColumnDefinitions().Append(configColumn);
-    displayBody_.ColumnDefinitions().Append(previewColumn);
-    displayBody_.ColumnSpacing(12);
-
     auto card = MakeCard();
     auto stack = StackPanel();
     stack.Spacing(12);
@@ -621,7 +637,7 @@ void SettingsWindow::Build() {
       Services::Instance().UpdatePresentation(presentation);
     }));
     auto dockRow = StackPanel();
-    dockRow.Orientation(Orientation::Horizontal);
+    BindActionRow(dockRow, 430);
     dockRow.Spacing(12);
     edgeAutoHideToggle_ = ToggleSwitch();
     edgeAutoHideToggle_.Header(box_value(L"贴边自动隐藏"));
@@ -663,8 +679,6 @@ void SettingsWindow::Build() {
     Add(stack, visibleToggle_);
 
     card.Child(stack);
-    Grid::SetColumn(card, 0);
-    displayBody_.Children().Append(card);
 
     // 右栏：与悬浮组件共用视觉逻辑的实时预览，附一行引擎摘要。
     auto previewCard = MakeCard();
@@ -726,11 +740,7 @@ void SettingsWindow::Build() {
         RefreshDisplayPreview(presentation);
       }
     });
-    Grid::SetColumn(previewCard, 1);
-    displayBody_.Children().Append(previewCard);
-    BindResponsiveColumns(displayBody_, previewColumn, previewCard, 320, 760);
-
-    Add(displayStack, displayBody_);
+    Add(displayStack, MakeAdaptiveColumns(card, previewCard, 320, 760));
   }
 
   // —— 通知 ——
@@ -740,15 +750,6 @@ void SettingsWindow::Build() {
       MakeSubtitle(L"由常驻应用在时段切换时主动请求系统通知，不预排整天通知。"));
   {
     // 左栏提醒状态，右栏系统权限与测试；窄窗口时纵向堆叠。
-    notificationBody_ = Grid();
-    auto stateColumn = ColumnDefinition();
-    stateColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-    auto checkColumn = ColumnDefinition();
-    checkColumn.Width(GridLengthHelper::FromValueAndType(280, GridUnitType::Pixel));
-    notificationBody_.ColumnDefinitions().Append(stateColumn);
-    notificationBody_.ColumnDefinitions().Append(checkColumn);
-    notificationBody_.ColumnSpacing(12);
-
     auto card = MakeCard();
     auto stack = StackPanel();
     stack.Spacing(12);
@@ -778,8 +779,6 @@ void SettingsWindow::Build() {
     Add(stack, MakeSubtitle(L"系统静音与勿扰模式由操作系统决定，应用不替代系统设置。"));
 
     card.Child(stack);
-    Grid::SetColumn(card, 0);
-    notificationBody_.Children().Append(card);
 
     auto checkCard = MakeCard();
     checkCard.Padding(Thickness{14, 14, 14, 14});
@@ -792,7 +791,6 @@ void SettingsWindow::Build() {
     Add(checkStack, permissionValueText_);
 
     auto buttons = StackPanel();
-    buttons.Orientation(Orientation::Horizontal);
     buttons.Spacing(8);
     auto test = Button();
     test.Content(box_value(hstring(L"发送测试通知")));
@@ -818,11 +816,7 @@ void SettingsWindow::Build() {
     Add(checkStack, testResultText_);
 
     checkCard.Child(checkStack);
-    Grid::SetColumn(checkCard, 1);
-    notificationBody_.Children().Append(checkCard);
-    BindResponsiveColumns(notificationBody_, checkColumn, checkCard, 280, 700);
-
-    Add(notificationsStack, notificationBody_);
+    Add(notificationsStack, MakeAdaptiveColumns(card, checkCard, 280, 700));
   }
 
   // —— 常规 ——
@@ -831,15 +825,6 @@ void SettingsWindow::Build() {
   Add(generalStack, MakeSubtitle(L"管理启动、退出以及本地配置；不改变作息时间本身。"));
   {
     // 左列启动与本地数据，右列关于；底部单独放退出按钮。
-    generalBody_ = Grid();
-    auto mainColumn = ColumnDefinition();
-    mainColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-    auto aboutColumn = ColumnDefinition();
-    aboutColumn.Width(GridLengthHelper::FromValueAndType(260, GridUnitType::Pixel));
-    generalBody_.ColumnDefinitions().Append(mainColumn);
-    generalBody_.ColumnDefinitions().Append(aboutColumn);
-    generalBody_.ColumnSpacing(12);
-
     auto leftStack = StackPanel();
     leftStack.Spacing(12);
 
@@ -873,9 +858,6 @@ void SettingsWindow::Build() {
     dataCard.Child(dataStack);
     Add(leftStack, dataCard);
 
-    Grid::SetColumn(leftStack, 0);
-    generalBody_.Children().Append(leftStack);
-
     auto aboutCard = MakeCard();
     aboutCard.Padding(Thickness{14, 14, 14, 14});
     aboutCard.VerticalAlignment(VerticalAlignment::Top);
@@ -886,10 +868,7 @@ void SettingsWindow::Build() {
     Add(aboutStack, versionText_);
     Add(aboutStack, MakeSubtitle(L"Windows · C++/WinRT + WinUI 3"));
     aboutCard.Child(aboutStack);
-    Grid::SetColumn(aboutCard, 1);
-    generalBody_.Children().Append(aboutCard);
-    BindResponsiveColumns(generalBody_, aboutColumn, aboutCard, 260, 640);
-    Add(generalStack, generalBody_);
+    Add(generalStack, MakeAdaptiveColumns(leftStack, aboutCard, 260, 640));
 
     auto exitRow = Grid();
     auto exitColumn = ColumnDefinition();

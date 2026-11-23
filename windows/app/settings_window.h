@@ -114,7 +114,7 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ComboBox templateCombo_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock templateStatus_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::RadioButtons planScope_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::StackPanel weekdayPanel_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::VariableSizedWrapGrid weekdayPanel_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer timetableScroll_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel segmentList_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid viewSegments_{nullptr};
@@ -157,22 +157,18 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch startupToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock versionText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock configPathText_{nullptr};
-  // 作息计划：顶栏状态徽标、非阻断提示、今日概览与响应式两栏宿主。
+  // 作息计划：顶栏状态徽标、非阻断提示与今日概览。
   winrt::Microsoft::UI::Xaml::Controls::InfoBar scheduleNotice_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::Grid scheduleBody_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock scheduleNowText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock scheduleDateText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel todayOverview_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Button clearTodayButton_{nullptr};
-  // 显示与位置：预览摘要文案与响应式两栏宿主。
-  winrt::Microsoft::UI::Xaml::Controls::Grid displayBody_{nullptr};
+  // 显示与位置：预览摘要文案。
   winrt::Microsoft::UI::Xaml::Controls::TextBlock previewSummaryText_{nullptr};
   // 通知：有效提醒状态、系统权限与最近一次测试结果。
-  winrt::Microsoft::UI::Xaml::Controls::Grid notificationBody_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock notificationStateText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock permissionValueText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock testResultText_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::Grid generalBody_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid editorOverlay_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid editorWorkspace_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Border editorCard_{nullptr};
