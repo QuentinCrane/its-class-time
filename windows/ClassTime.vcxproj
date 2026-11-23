@@ -83,7 +83,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dwmapi.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>true</EnableDpiAwareness>
@@ -126,6 +126,7 @@
     <ClInclude Include="app\overlay_window.h" />
     <ClInclude Include="app\services.h" />
     <ClInclude Include="app\tray_icon.h" />
+    <ClInclude Include="app\ui_motion.h" />
     <ClInclude Include="engine\include\classtime\config.h" />
     <ClInclude Include="engine\include\classtime\edit_ops.h" />
     <ClInclude Include="engine\include\classtime\json.h" />

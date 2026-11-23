@@ -64,12 +64,10 @@ void TrayIcon::Destroy() {
   }
 }
 
-void TrayIcon::Update(const std::wstring& tooltip, bool overlayVisible, bool ringView,
-                      bool allDayScope, bool muted) {
+void TrayIcon::Update(const std::wstring& tooltip,
+                      const classtime::PresentationSettings& presentation, bool muted) {
   tooltip_ = tooltip;
-  overlayVisible_ = overlayVisible;
-  ringView_ = ringView;
-  allDayScope_ = allDayScope;
+  presentation_ = presentation;
   muted_ = muted;
   if (!added_) return;
   wcsncpy_s(data_.szTip, tooltip_.c_str(), _TRUNCATE);
@@ -120,15 +118,22 @@ void TrayIcon::ShowMenu() {
   if (menu == nullptr) return;
   AppendMenuW(menu, MF_STRING, kTrayOpenSettings, L"打开设置");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING | (overlayVisible_ ? MF_CHECKED : MF_UNCHECKED), kTrayToggleOverlay,
+  AppendMenuW(menu, MF_STRING | (presentation_.visible ? MF_CHECKED : MF_UNCHECKED), kTrayToggleOverlay,
               L"显示悬浮窗");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING | (!ringView_ ? MF_CHECKED : MF_UNCHECKED), kTrayBarView, L"分节长条");
-  AppendMenuW(menu, MF_STRING | (ringView_ ? MF_CHECKED : MF_UNCHECKED), kTrayRingView, L"圆环");
+  using View = classtime::PresentationSettings::View;
+  const auto appendView = [&](View view, UINT command, const wchar_t* label) {
+    AppendMenuW(menu, MF_STRING | (presentation_.view == view ? MF_CHECKED : MF_UNCHECKED),
+                command, label);
+  };
+  appendView(View::Bar, kTrayBarView, L"分节长条");
+  appendView(View::Ring, kTrayRingView, L"圆环");
+  appendView(View::ScreenEdge, kTrayScreenEdgeView, L"屏幕边框");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING | (!allDayScope_ ? MF_CHECKED : MF_UNCHECKED), kTrayCurrentScope,
+  const bool allDay = presentation_.scope == classtime::PresentationSettings::Scope::AllDay;
+  AppendMenuW(menu, MF_STRING | (!allDay ? MF_CHECKED : MF_UNCHECKED), kTrayCurrentScope,
               L"当前时段");
-  AppendMenuW(menu, MF_STRING | (allDayScope_ ? MF_CHECKED : MF_UNCHECKED), kTrayAllDayScope,
+  AppendMenuW(menu, MF_STRING | (allDay ? MF_CHECKED : MF_UNCHECKED), kTrayAllDayScope,
               L"全天");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING | (muted_ ? MF_CHECKED : MF_UNCHECKED), kTrayToggleMute,

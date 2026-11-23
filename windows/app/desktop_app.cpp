@@ -119,10 +119,7 @@ void DesktopApp::ApplyState() {
   const auto& config = services.config();
 
   if (tray_) {
-    tray_->Update(BuildTooltip(), config.presentation.visible,
-                  config.presentation.view == classtime::PresentationSettings::View::Ring,
-                  config.presentation.scope == classtime::PresentationSettings::Scope::AllDay,
-                  config.notifications.muted);
+    tray_->Update(BuildTooltip(), config.presentation, config.notifications.muted);
   }
 
   if (overlay_) {
@@ -165,6 +162,10 @@ void DesktopApp::HandleTrayCommand(UINT command) {
       break;
     case kTrayRingView:
       presentation.view = classtime::PresentationSettings::View::Ring;
+      services.UpdatePresentation(presentation);
+      break;
+    case kTrayScreenEdgeView:
+      presentation.view = classtime::PresentationSettings::View::ScreenEdge;
       services.UpdatePresentation(presentation);
       break;
     case kTrayCurrentScope:

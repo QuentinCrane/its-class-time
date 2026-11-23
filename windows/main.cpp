@@ -19,6 +19,9 @@ bool HasPackageIdentity() {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+  // Inno Setup checks this marker before an upgrade or uninstall. The OS
+  // releases it when the process exits, including after tray shutdown.
+  CreateMutexW(nullptr, FALSE, L"ClassTime.Desktop.Running");
   init_apartment(apartment_type::single_threaded);
 
   bool bootstrapped = false;

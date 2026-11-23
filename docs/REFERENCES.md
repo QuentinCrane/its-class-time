@@ -1,6 +1,6 @@
 # REFERENCES｜官方开发资料
 
-> 检索核对时间：2026-11-21。下列链接以官方技术文档为准；SDK 新旧可能变化，实际开始工程时需重新看对应目标版本的 API 兼容性。不是所有官网示例都直接适用于最终项目打包类型。
+> 检索核对时间：2026-11-21，2026-11-22 补充纯代码 WinUI 与打包工具条目。下列链接以官方技术文档为准；SDK 新旧可能变化，实际开始工程时需重新看对应目标版本的 API 兼容性。不是所有官网示例都直接适用于最终项目打包类型。
 
 ## Apple
 
@@ -21,7 +21,9 @@
 6. [Shell notification area](https://learn.microsoft.com/en-us/windows/win32/shell/notification-area) — 系统托盘，`Shell_NotifyIcon`。
 7. [SetWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos) — Win32 置顶与位置。
 8. [Windows App SDK desktop app lifecycle](https://learn.microsoft.com/en-us/windows/apps/develop/launch/app-lifecycle) — 普通桌面进程生命周期。
-9. [Unpackaged Windows App SDK runtime](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/use-windows-app-sdk-run-time) — 若未来转换安装形式，注意初始化差异。
+9. [Unpackaged Windows App SDK runtime](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/use-windows-app-sdk-run-time) — 解包运行的初始化差异（本项目当前使用这条路径）。
+10. [microsoft-ui-xaml #7606](https://github.com/microsoft/microsoft-ui-xaml/issues/7606) — 纯代码构建 WinUI 3 时，`XamlControlsResources` 要求应用实现 `IXamlMetadataProvider`，否则控件默认样式解析失败。
+11. [Inno Setup 帮助文档](https://jrsoftware.org/ishelp/) — 当前 Windows 离线安装包使用的打包工具。
 
 ## GitHub
 

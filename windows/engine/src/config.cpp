@@ -71,6 +71,7 @@ bool ParseSegmentsArray(const json::Value& array, std::vector<Segment>& out, std
 }
 
 const char* ViewToString(PresentationSettings::View view) {
+  if (view == PresentationSettings::View::ScreenEdge) return "screen_edge";
   return view == PresentationSettings::View::Ring ? "ring" : "bar";
 }
 
@@ -79,10 +80,16 @@ const char* ScopeToString(PresentationSettings::Scope scope) {
 }
 
 const char* EdgeToString(PresentationSettings::Edge edge) {
-  return edge == PresentationSettings::Edge::Top ? "top" : "bottom";
+  switch (edge) {
+    case PresentationSettings::Edge::Top: return "top";
+    case PresentationSettings::Edge::Left: return "left";
+    case PresentationSettings::Edge::Right: return "right";
+    default: return "bottom";
+  }
 }
 
 PresentationSettings::View ViewFromString(const std::string& text) {
+  if (text == "screen_edge") return PresentationSettings::View::ScreenEdge;
   return text == "ring" ? PresentationSettings::View::Ring : PresentationSettings::View::Bar;
 }
 
@@ -92,7 +99,10 @@ PresentationSettings::Scope ScopeFromString(const std::string& text) {
 }
 
 PresentationSettings::Edge EdgeFromString(const std::string& text) {
-  return text == "top" ? PresentationSettings::Edge::Top : PresentationSettings::Edge::Bottom;
+  if (text == "top") return PresentationSettings::Edge::Top;
+  if (text == "left") return PresentationSettings::Edge::Left;
+  if (text == "right") return PresentationSettings::Edge::Right;
+  return PresentationSettings::Edge::Bottom;
 }
 
 bool ParseScheduleValue(const json::Value& root, Schedule& schedule, std::string* error) {
@@ -217,6 +227,18 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
     if (const json::Value* visible = presentation->Find("visible")) {
       config.presentation.visible = visible->AsBool(true);
     }
+    if (const json::Value* autoHide = presentation->Find("autoHideAtEdge")) {
+      config.presentation.autoHideAtEdge = autoHide->AsBool(false);
+    }
+    if (const json::Value* flush = presentation->Find("flushWithEdge")) {
+      config.presentation.flushWithEdge = flush->AsBool(true);
+    }
+    if (const auto* thickness = presentation->Find("screenEdgeThickness")) {
+      config.presentation.screenEdgeThickness = std::clamp(
+          thickness->AsInt(PresentationSettings::kDefaultScreenEdgeThickness),
+          PresentationSettings::kMinScreenEdgeThickness,
+          PresentationSettings::kMaxScreenEdgeThickness);
+    }
     if (const json::Value* monitor = presentation->Find("monitorId")) {
       config.presentation.monitorId = monitor->AsString();
     }
@@ -286,6 +308,9 @@ std::string SerializeConfig(const AppConfig& config) {
   presentation.Set("scope", json::Value::MakeString(ScopeToString(config.presentation.scope)));
   presentation.Set("edge", json::Value::MakeString(EdgeToString(config.presentation.edge)));
   presentation.Set("visible", json::Value::MakeBool(config.presentation.visible));
+  presentation.Set("autoHideAtEdge", json::Value::MakeBool(config.presentation.autoHideAtEdge));
+  presentation.Set("flushWithEdge", json::Value::MakeBool(config.presentation.flushWithEdge));
+  presentation.Set("screenEdgeThickness", json::Value::MakeNumber(config.presentation.screenEdgeThickness));
   presentation.Set("monitorId", json::Value::MakeString(config.presentation.monitorId));
   presentation.Set("offsetX", json::Value::MakeNumber(config.presentation.offsetX));
   presentation.Set("offsetY", json::Value::MakeNumber(config.presentation.offsetY));

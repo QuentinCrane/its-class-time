@@ -1,12 +1,13 @@
 @echo off
 setlocal
 REM Direct cl+link build for the unpackaged ClassTime app, no MSBuild/XAML compiler required.
-REM Usage: tools\build-unpackaged.cmd  (from any directory)
+REM Usage: tools\build-unpackaged.cmd [output-directory]
 
 for %%i in ("%~dp0..") do set "ROOT=%%~fi"
 set "PKG=%ROOT%\packages\Microsoft.WindowsAppSDK.1.6.250602001"
 set "CPPWINRT=%ROOT%\packages\Microsoft.Windows.CppWinRT.2.0.240111.5"
 set "OUTDIR=%ROOT%\build\app"
+if not "%~1"=="" set "OUTDIR=%~f1"
 set "OBJDIR=%OUTDIR%\obj"
 set "EXE=%OUTDIR%\ClassTimeApp.exe"
 
@@ -36,7 +37,7 @@ for %%f in (config.cpp edit_ops.cpp json.cpp schedule.cpp time_engine.cpp) do (
 rc /nologo /fo "%OBJDIR%\ClassTime.res" /I "%ROOT%" "%ROOT%\ClassTime.rc" || exit /b 1
 
 echo [4/4] link
-link /nologo /OUT:"%EXE%" /MACHINE:X64 /SUBSYSTEM:WINDOWS /MANIFEST:EMBED ^
+link /nologo /OUT:"%EXE%" /MACHINE:X64 /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTINPUT:"%ROOT%\app.manifest" ^
   "%OBJDIR%\pch.obj" "%OBJDIR%\main.obj" "%OBJDIR%\desktop_app.obj" "%OBJDIR%\settings_window.obj" ^
   "%OBJDIR%\boundary_monitor.obj" "%OBJDIR%\notification_service.obj" "%OBJDIR%\overlay_window.obj" ^
   "%OBJDIR%\services.obj" "%OBJDIR%\tray_icon.obj" "%OBJDIR%\config.obj" "%OBJDIR%\edit_ops.obj" ^

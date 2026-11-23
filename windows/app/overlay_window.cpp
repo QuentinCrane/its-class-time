@@ -1,9 +1,11 @@
 #include "pch.h"
 #include "overlay_window.h"
 #include "services.h"
+#include "ui_motion.h"
 
-
+#include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Interop.h>
+#include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Windows.UI.ViewManagement.h>
 
 using namespace winrt;
@@ -15,11 +17,23 @@ using namespace Windows::UI::ViewManagement;
 namespace ClassTimeApp {
 namespace {
 
-constexpr double kBarWidthDip = 780.0;
-constexpr double kBarHeightDip = 100.0;
-constexpr double kRingWidthDip = 300.0;
-constexpr double kRingHeightDip = 330.0;
-constexpr double kSegmentAreaWidth = 748.0;
+using View = classtime::PresentationSettings::View;
+
+constexpr double kBarWidthDip = 680.0;
+constexpr double kBarHeightDip = 32.0;
+constexpr double kSideBarThicknessDip = 34.0;
+constexpr double kSideBarLengthDip = 420.0;
+constexpr double kBarHostThicknessDip = 24.0;
+constexpr double kRingDiameterDip = 156.0;
+constexpr double kBarInsetDip = 8.0;
+constexpr float kRingCenter = kRingDiameterDip / 2;
+constexpr float kRingRadius = kRingCenter - 10;
+constexpr double kRingStroke = 7.0;
+constexpr double kDetailWidth = 280.0;
+constexpr double kDetailTrackWidth = 194.0;
+constexpr int kSnapInsetDip = 12;
+constexpr double kHandleWidthDip = 84;
+constexpr double kHandleHeightDip = 12;
 
 struct Palette {
   Windows::UI::Color background;
@@ -48,8 +62,6 @@ Palette CurrentPalette() {
   }
   palette.rest = Windows::UI::ColorHelper::FromArgb(255, 63, 167, 150);
   palette.lunch = Windows::UI::ColorHelper::FromArgb(255, 224, 164, 88);
-  // 卡片保持接近不透明，悬浮层不抢桌面内容的注意力。
-  palette.background = WithAlpha(palette.background, 246);
   return palette;
 }
 
@@ -63,8 +75,66 @@ Windows::UI::Color KindColor(const Palette& palette, classtime::SegmentKind kind
   return palette.accent;
 }
 
-GridLength AutoLength() { return GridLengthHelper::Auto(); }
-GridLength StarLength() { return GridLengthHelper::FromValueAndType(1, GridUnitType::Star); }
+bool IsSideEdge(classtime::PresentationSettings::Edge edge) {
+  return edge == classtime::PresentationSettings::Edge::Left ||
+         edge == classtime::PresentationSettings::Edge::Right;
+}
+
+POINT EdgeShift(classtime::PresentationSettings::Edge edge, int distance) {
+  switch (edge) {
+    case classtime::PresentationSettings::Edge::Top: return {0, -distance};
+    case classtime::PresentationSettings::Edge::Left: return {-distance, 0};
+    case classtime::PresentationSettings::Edge::Right: return {distance, 0};
+    default: return {0, distance};
+  }
+}
+
+uint32_t PremultipliedBgra(Windows::UI::Color color) {
+  const uint32_t alpha = color.A;
+  return (alpha << 24) | ((color.R * alpha / 255) << 16) |
+         ((color.G * alpha / 255) << 8) | (color.B * alpha / 255);
+}
+
+bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool reverse,
+                     int filledPixels, uint32_t fill, uint32_t track) {
+  SIZE size{bounds.right - bounds.left, bounds.bottom - bounds.top};
+  BITMAPINFO info{};
+  info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  info.bmiHeader.biWidth = size.cx;
+  info.bmiHeader.biHeight = -size.cy;
+  info.bmiHeader.biPlanes = 1;
+  info.bmiHeader.biBitCount = 32;
+  info.bmiHeader.biCompression = BI_RGB;
+
+  HDC dc = CreateCompatibleDC(nullptr);
+  if (!dc) return false;
+  void* bitmapData = nullptr;
+  HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &bitmapData, nullptr, 0);
+  bool rendered = false;
+  if (bitmap) {
+    const HGDIOBJ previousBitmap = SelectObject(dc, bitmap);
+    if (previousBitmap && previousBitmap != HGDI_ERROR) {
+      auto* pixels = static_cast<uint32_t*>(bitmapData);
+      const int length = horizontal ? size.cx : size.cy;
+      for (int y = 0; y < size.cy; ++y) {
+        for (int x = 0; x < size.cx; ++x) {
+          const int position = horizontal ? x : y;
+          const int distance = reverse ? length - 1 - position : position;
+          *pixels++ = distance < filledPixels ? fill : track;
+        }
+      }
+      POINT origin{};
+      POINT position{bounds.left, bounds.top};
+      BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+      rendered = UpdateLayeredWindow(hwnd, nullptr, &position, &size, dc, &origin, 0, &blend,
+                                     ULW_ALPHA) != FALSE;
+      SelectObject(dc, previousBitmap);
+    }
+    DeleteObject(bitmap);
+  }
+  DeleteDC(dc);
+  return rendered;
+}
 
 TextBlock MakeText(double size, Windows::UI::Color color, bool semibold = false) {
   TextBlock block;
@@ -74,12 +144,36 @@ TextBlock MakeText(double size, Windows::UI::Color color, bool semibold = false)
   return block;
 }
 
-std::wstring RemainingText(const classtime::Segment& segment, const classtime::WallClock& now) {
-  const int totalSeconds = segment.DurationMinutes() * 60;
-  const int elapsedSeconds =
-      (now.hour * 3600 + now.minute * 60 + now.second) - segment.start.TotalMinutes() * 60;
-  const int remaining = std::max(0, (totalSeconds - elapsedSeconds + 59) / 60);
-  return std::to_wstring(remaining) + L" 分钟";
+std::wstring FormatElapsed(int seconds) {
+  wchar_t time[16];
+  swprintf_s(time, L"%02d:%02d", seconds / 60, seconds % 60);
+  return time;
+}
+
+HMONITOR FindMonitor(const std::string& id) {
+  struct Search {
+    std::wstring device;
+    HMONITOR monitor = nullptr;
+  } search{ToWide(id)};
+  if (!search.device.empty()) {
+    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR monitor, HDC, LPRECT, LPARAM data) -> BOOL {
+      auto& search = *reinterpret_cast<Search*>(data);
+      MONITORINFOEXW info{};
+      info.cbSize = sizeof(info);
+      if (GetMonitorInfoW(monitor, &info) && search.device == info.szDevice) {
+        search.monitor = monitor;
+        return FALSE;
+      }
+      return TRUE;
+    }, reinterpret_cast<LPARAM>(&search));
+  }
+  return search.monitor ? search.monitor : MonitorFromPoint(POINT{}, MONITOR_DEFAULTTOPRIMARY);
+}
+
+POINT ClampToWorkArea(POINT point, const RECT& work, int width, int height) {
+  point.x = std::clamp(point.x, work.left, std::max(work.left, work.right - width));
+  point.y = std::clamp(point.y, work.top, std::max(work.top, work.bottom - height));
+  return point;
 }
 
 }  // namespace
@@ -87,12 +181,9 @@ std::wstring RemainingText(const classtime::Segment& segment, const classtime::W
 OverlayWindow::OverlayWindow() { CreateNativeWindow(); }
 
 OverlayWindow::~OverlayWindow() {
-  StopTimer();
-  if (window_ != nullptr) {
-    try {
-      window_.Close();
-    } catch (...) {
-    }
+  try {
+    Close();
+  } catch (...) {
   }
 }
 
@@ -100,7 +191,7 @@ void OverlayWindow::CreateNativeWindow() {
   window_ = Window();
   window_.Title(L"ClassTime Overlay");
 
-  // 关键顺序：先配置无边框 presenter，再挂内容并激活，
+  // 先配置无边框 presenter，再挂内容并激活，
   // 避免 SetBorderAndTitleBar 重建 HWND 时把已挂载的 XAML 岛拆掉。
   auto appWindow = window_.AppWindow();
   if (auto presenter = appWindow.Presenter().try_as<Microsoft::UI::Windowing::OverlappedPresenter>()) {
@@ -111,12 +202,29 @@ void OverlayWindow::CreateNativeWindow() {
   }
 
   root_ = Grid();
+  root_.UseLayoutRounding(true);
   root_.Background(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)));
   window_.Content(root_);
 
   BuildBar();
   BuildRing();
+  BuildDetailCard();
+  const auto palette = CurrentPalette();
+  edgeHandle_ = Border();
+  edgeHandle_.Background(SolidColorBrush(palette.background));
+  edgeGrip_ = Border();
+  edgeGrip_.Width(34);
+  edgeGrip_.Height(3);
+  edgeGrip_.CornerRadius(CornerRadius{2, 2, 2, 2});
+  edgeGrip_.HorizontalAlignment(HorizontalAlignment::Center);
+  edgeGrip_.VerticalAlignment(VerticalAlignment::Center);
+  edgeGrip_.Background(SolidColorBrush(WithAlpha(palette.accent, 210)));
+  edgeHandle_.Child(edgeGrip_);
+  edgeHandle_.Visibility(Visibility::Collapsed);
+  root_.Children().Append(edgeHandle_);
+  BindDrag();
 
+  // WinUI 首次 Activate 初始化内容岛。后续从托盘恢复使用无激活显示。
   window_.Activate();
 
   hwnd_ = reinterpret_cast<HWND>(winrt::Microsoft::UI::GetWindowFromWindowId(appWindow.Id()));
@@ -126,230 +234,1063 @@ void OverlayWindow::CreateNativeWindow() {
     DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_ROUND;
     DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
   }
+  window_.SizeChanged([this](auto const&, auto const&) { UpdateWindowShape(); });
 
-  created_ = true;
   ApplyPresentation();
 }
 
 void OverlayWindow::BuildBar() {
   const Palette palette = CurrentPalette();
 
-  auto card = Border();
-  card.CornerRadius(CornerRadius{18, 18, 18, 18});
-  card.BorderThickness(Thickness{1, 1, 1, 1});
-  card.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 24)));
-  card.Background(SolidColorBrush(palette.background));
-  card.Padding(Thickness{16, 10, 16, 10});
+  barRoot_ = Border();
+  barRoot_.CornerRadius(CornerRadius{12, 12, 12, 12});
+  barRoot_.Background(SolidColorBrush(palette.background));
+  barRoot_.Padding(Thickness{kBarInsetDip, 0, kBarInsetDip, 0});
 
-  barRoot_ = Grid();
-  auto rowTop = RowDefinition();
-  rowTop.Height(AutoLength());
-  auto rowBars = RowDefinition();
-  rowBars.Height(AutoLength());
-  auto rowBottom = RowDefinition();
-  rowBottom.Height(AutoLength());
-  barRoot_.RowDefinitions().Append(rowTop);
-  barRoot_.RowDefinitions().Append(rowBars);
-  barRoot_.RowDefinitions().Append(rowBottom);
-  barRoot_.RowSpacing(8);
-
-  // 第一行：状态 + 进度百分比
-  auto top = Grid();
-  auto colLeft = ColumnDefinition();
-  colLeft.Width(StarLength());
-  auto colRight = ColumnDefinition();
-  colRight.Width(AutoLength());
-  top.ColumnDefinitions().Append(colLeft);
-  top.ColumnDefinitions().Append(colRight);
-
-  auto statePanel = StackPanel();
-  statePanel.Orientation(Orientation::Horizontal);
-  statePanel.Spacing(8);
-  statePanel.VerticalAlignment(VerticalAlignment::Center);
-
-  auto pill = Border();
-  pill.CornerRadius(CornerRadius{9, 9, 9, 9});
-  pill.Padding(Thickness{8, 2, 8, 3});
-  pill.Background(SolidColorBrush(WithAlpha(palette.accent, 30)));
-  stateText_ = MakeText(12, palette.accent, true);
-  stateText_.Text(L"空闲");
-  pill.Child(stateText_);
-  statePanel.Children().Append(pill);
-
-  auto hint = MakeText(12, WithAlpha(palette.foreground, 140));
-  hint.Text(L"“上课”时间到！");
-  statePanel.Children().Append(hint);
-  top.Children().Append(statePanel);
-
-  progressText_ = MakeText(13, WithAlpha(palette.foreground, 170), true);
-  progressText_.HorizontalAlignment(HorizontalAlignment::Right);
-  progressText_.VerticalAlignment(VerticalAlignment::Center);
-  Grid::SetColumn(progressText_, 1);
-  top.Children().Append(progressText_);
-  barRoot_.Children().Append(top);
-
-  // 第二行：分节进度
   segmentPanel_ = StackPanel();
   segmentPanel_.Orientation(Orientation::Horizontal);
-  segmentPanel_.Spacing(4);
-  segmentPanel_.Height(14);
   segmentPanel_.VerticalAlignment(VerticalAlignment::Center);
-  Grid::SetRow(segmentPanel_, 1);
-  barRoot_.Children().Append(segmentPanel_);
-
-  // 第三行：下一段 / 暂停状态
-  auto bottom = Grid();
-  auto bottomLeft = ColumnDefinition();
-  bottomLeft.Width(StarLength());
-  auto bottomRight = ColumnDefinition();
-  bottomRight.Width(AutoLength());
-  bottom.ColumnDefinitions().Append(bottomLeft);
-  bottom.ColumnDefinitions().Append(bottomRight);
-
-  nextText_ = MakeText(12, WithAlpha(palette.foreground, 150));
-  nextText_.TextTrimming(TextTrimming::CharacterEllipsis);
-  bottom.Children().Append(nextText_);
-
-  pauseText_ = MakeText(12, WithAlpha(palette.foreground, 150));
-  pauseText_.HorizontalAlignment(HorizontalAlignment::Right);
-  pauseText_.Text(L"提醒已暂停");
-  pauseText_.Visibility(Visibility::Collapsed);
-  Grid::SetColumn(pauseText_, 1);
-  bottom.Children().Append(pauseText_);
-  Grid::SetRow(bottom, 2);
-  barRoot_.Children().Append(bottom);
-
-  card.Child(barRoot_);
-  root_.Children().Append(card);
-  barRoot_.Visibility(Visibility::Visible);
+  barRoot_.Child(segmentPanel_);
+  root_.Children().Append(barRoot_);
 }
 
 void OverlayWindow::BuildRing() {
-  const Palette palette = CurrentPalette();
+  const auto palette = CurrentPalette();
+  auto dial = Canvas();
+  dial.Width(kRingDiameterDip);
+  dial.Height(kRingDiameterDip);
+  dial.Background(SolidColorBrush(palette.background));
 
-  auto card = Border();
-  card.CornerRadius(CornerRadius{24, 24, 24, 24});
-  card.BorderThickness(Thickness{1, 1, 1, 1});
-  card.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 24)));
-  card.Background(SolidColorBrush(palette.background));
-  card.Padding(Thickness{20, 22, 20, 18});
-
-  auto stack = StackPanel();
-  stack.Spacing(10);
-  stack.HorizontalAlignment(HorizontalAlignment::Center);
-
-  auto dial = Grid();
-  dial.Width(220);
-  dial.Height(220);
-
-  Shapes::Ellipse track;
-  track.Width(196);
-  track.Height(196);
-  track.Stroke(SolidColorBrush(WithAlpha(palette.foreground, 28)));
-  track.StrokeThickness(12);
-  track.HorizontalAlignment(HorizontalAlignment::Center);
-  track.VerticalAlignment(VerticalAlignment::Center);
+  EllipseGeometry circle;
+  circle.Center({kRingCenter, kRingCenter});
+  circle.RadiusX(kRingRadius);
+  circle.RadiusY(kRingRadius);
+  Shapes::Path track;
+  track.Data(circle);
+  track.Stroke(SolidColorBrush(WithAlpha(palette.foreground, 32)));
+  track.StrokeThickness(kRingStroke);
   dial.Children().Append(track);
 
+  PathGeometry progress;
+  PathFigure figure;
+  figure.StartPoint({kRingCenter, kRingCenter - kRingRadius});
+  ringSweep_ = ArcSegment();
+  ringSweep_.Size({kRingRadius, kRingRadius});
+  ringSweep_.SweepDirection(SweepDirection::Clockwise);
+  ringSweep_.Point(figure.StartPoint());
+  figure.Segments().Append(ringSweep_);
+  progress.Figures().Append(figure);
   ringArc_ = Shapes::Path();
-  ringArc_.Stroke(SolidColorBrush(palette.accent));
-  ringArc_.StrokeThickness(12);
+  ringAccent_ = SolidColorBrush(palette.accent);
+  ringArc_.Data(progress);
+  ringArc_.Stroke(ringAccent_);
+  ringArc_.StrokeThickness(kRingStroke);
   ringArc_.StrokeStartLineCap(PenLineCap::Round);
   ringArc_.StrokeEndLineCap(PenLineCap::Round);
-  ringArc_.HorizontalAlignment(HorizontalAlignment::Center);
-  ringArc_.VerticalAlignment(VerticalAlignment::Center);
+  ringArc_.Visibility(Visibility::Collapsed);
   dial.Children().Append(ringArc_);
 
-  ringFull_ = Shapes::Path();
-  ringFull_.Stroke(SolidColorBrush(palette.accent));
-  ringFull_.StrokeThickness(12);
-  ringFull_.Visibility(Visibility::Collapsed);
-  ringFull_.HorizontalAlignment(HorizontalAlignment::Center);
-  ringFull_.VerticalAlignment(VerticalAlignment::Center);
-  dial.Children().Append(ringFull_);
+  // 读数固定在盘面中央，切换范围时只改变下方文字。
+  const auto placeReadout = [&](const TextBlock& text, double top) {
+    text.Width(kRingDiameterDip);
+    text.TextAlignment(TextAlignment::Center);
+    Canvas::SetTop(text, top);
+    dial.Children().Append(text);
+  };
+  const auto secondary = WithAlpha(palette.foreground, 180);
+  ringLabel_ = MakeText(12, secondary);
+  ringTime_ = MakeText(32, palette.foreground, true);
+  ringTime_.FontFamily(FontFamily(L"Bahnschrift"));
+  ringSummary_ = MakeText(11, secondary);
+  placeReadout(ringLabel_, 43);
+  placeReadout(ringTime_, 58);
+  placeReadout(ringSummary_, 100);
 
-  auto center = StackPanel();
-  center.HorizontalAlignment(HorizontalAlignment::Center);
-  center.VerticalAlignment(VerticalAlignment::Center);
-  center.Spacing(2);
-  ringPercent_ = MakeText(34, palette.foreground, true);
-  ringPercent_.HorizontalAlignment(HorizontalAlignment::Center);
-  ringPercent_.Text(L"0%");
-  ringLabel_ = MakeText(12, WithAlpha(palette.foreground, 160));
-  ringLabel_.HorizontalAlignment(HorizontalAlignment::Center);
-  ringLabel_.Text(L"空闲");
-  center.Children().Append(ringPercent_);
-  center.Children().Append(ringLabel_);
-  dial.Children().Append(center);
-
-  stack.Children().Append(dial);
-
-  ringNext_ = MakeText(12, WithAlpha(palette.foreground, 160));
-  ringNext_.HorizontalAlignment(HorizontalAlignment::Center);
-  ringNext_.TextTrimming(TextTrimming::CharacterEllipsis);
-  stack.Children().Append(ringNext_);
-
-  ringDots_ = StackPanel();
-  ringDots_.Orientation(Orientation::Horizontal);
-  ringDots_.Spacing(6);
-  ringDots_.HorizontalAlignment(HorizontalAlignment::Center);
-  stack.Children().Append(ringDots_);
-
-  card.Child(stack);
+  Viewbox face;
+  face.Stretch(Stretch::Uniform);
+  face.Child(dial);
   ringRoot_ = Grid();
-  ringRoot_.Children().Append(card);
+  ringRoot_.Children().Append(face);
+  ringRoot_.PointerMoved([this](auto const&, auto const&) {
+    if (!ringDetailId_.empty()) ShowDetail(ringRoot_, ringDetailId_);
+  });
   root_.Children().Append(ringRoot_);
   ringRoot_.Visibility(Visibility::Collapsed);
 }
 
+void OverlayWindow::BuildDetailCard() {
+  const auto palette = CurrentPalette();
+  const auto secondary = WithAlpha(palette.foreground, 175);
+
+  detailCard_ = Border();
+  detailCard_.Width(kDetailWidth);
+  detailCard_.Padding(Thickness{14, 12, 14, 12});
+  detailCard_.Background(SolidColorBrush(palette.background));
+  detailCard_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 42)));
+  detailCard_.BorderThickness(Thickness{1, 1, 1, 1});
+  detailCard_.CornerRadius(CornerRadius{14, 14, 14, 14});
+
+  StackPanel content;
+  content.Spacing(7);
+
+  StackPanel heading;
+  heading.Orientation(Orientation::Horizontal);
+  heading.Spacing(8);
+  detailMarker_ = Border();
+  detailMarker_.Width(4);
+  detailMarker_.Height(14);
+  detailMarker_.CornerRadius(CornerRadius{2, 2, 2, 2});
+  detailMarker_.VerticalAlignment(VerticalAlignment::Center);
+  heading.Children().Append(detailMarker_);
+  detailTitle_ = MakeText(15, palette.foreground, true);
+  heading.Children().Append(detailTitle_);
+  content.Children().Append(heading);
+
+  detailRange_ = MakeText(12, secondary);
+  detailRange_.TextTrimming(TextTrimming::CharacterEllipsis);
+  content.Children().Append(detailRange_);
+
+  Grid meter;
+  meter.ColumnSpacing(8);
+  ColumnDefinition trackColumn;
+  trackColumn.Width(GridLengthHelper::FromValueAndType(kDetailTrackWidth, GridUnitType::Pixel));
+  meter.ColumnDefinitions().Append(trackColumn);
+  ColumnDefinition percentColumn;
+  percentColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+  meter.ColumnDefinitions().Append(percentColumn);
+
+  Border track;
+  track.Height(7);
+  track.VerticalAlignment(VerticalAlignment::Center);
+  track.CornerRadius(CornerRadius{3.5, 3.5, 3.5, 3.5});
+  track.Background(SolidColorBrush(WithAlpha(palette.foreground, 30)));
+  detailFill_ = Border();
+  detailFill_.HorizontalAlignment(HorizontalAlignment::Left);
+  detailFill_.CornerRadius(track.CornerRadius());
+  track.Child(detailFill_);
+  meter.Children().Append(track);
+
+  detailPercent_ = MakeText(13, palette.foreground, true);
+  detailPercent_.HorizontalAlignment(HorizontalAlignment::Right);
+  Grid::SetColumn(detailPercent_, 1);
+  meter.Children().Append(detailPercent_);
+  content.Children().Append(meter);
+
+  detailTiming_ = MakeText(12, secondary);
+  content.Children().Append(detailTiming_);
+  detailNext_ = MakeText(12, secondary);
+  detailNext_.TextTrimming(TextTrimming::CharacterEllipsis);
+  content.Children().Append(detailNext_);
+  detailMuted_ = MakeText(12, secondary);
+  detailMuted_.Text(L"提醒已暂停");
+  content.Children().Append(detailMuted_);
+  detailCard_.Child(content);
+
+  detailPopup_ = Primitives::Popup();
+  detailPopup_.ShouldConstrainToRootBounds(false);
+  detailPopup_.IsHitTestVisible(false);
+  detailPopup_.Child(detailCard_);
+  root_.Children().Append(detailPopup_);
+}
+
+void OverlayWindow::ShowDetail(const FrameworkElement& anchor, const std::string& segmentId) {
+  if (dragPointer_ || snapFrame_.value || !visible_ || edgeClosing_) return;
+  if (detailAnchor_ == anchor && detailSegmentId_ == segmentId) return;
+
+  const bool reopening = detailPopup_.IsOpen() && !detailAnchor_;
+  detailAnchor_ = anchor;
+  detailSegmentId_ = segmentId;
+  RefreshDetail();
+  if (!detailAnchor_) return;
+  // 在同一条悬浮条上扫过相邻课块时，只更新内容，保持弹卡位置。
+  if (detailPopup_.IsOpen()) {
+    if (reopening) AnimateDetail(true);
+    return;
+  }
+
+  const auto anchorCenter = anchor.TransformToVisual(root_).TransformPoint(
+      {static_cast<float>(anchor.ActualWidth() / 2), static_cast<float>(anchor.ActualHeight() / 2)});
+  POINT origin{};
+  RECT windowRect{};
+  MONITORINFO info{sizeof(info)};
+  if (!ClientToScreen(hwnd_, &origin) || !GetWindowRect(hwnd_, &windowRect) ||
+      !GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &info)) {
+    HideDetail();
+    return;
+  }
+
+  const double scale = root_.XamlRoot().RasterizationScale();
+  detailCard_.Measure({static_cast<float>(kDetailWidth), 1000});
+  const int cardWidth = static_cast<int>(std::ceil(kDetailWidth * scale));
+  const int cardHeight = static_cast<int>(std::ceil(detailCard_.DesiredSize().Height * scale));
+  const int gap = static_cast<int>(std::lround(8 * scale));
+  const int anchorX = origin.x + std::lround(anchorCenter.X * scale);
+  const int anchorY = origin.y + std::lround(anchorCenter.Y * scale);
+  POINT preferred{};
+  double originX = 0.5;
+  double originY = 0.5;
+  switch (edge_) {
+    case classtime::PresentationSettings::Edge::Top:
+      preferred = {anchorX - cardWidth / 2, windowRect.top - gap - cardHeight};
+      originY = 1.0;
+      break;
+    case classtime::PresentationSettings::Edge::Left:
+      preferred = {windowRect.left - gap - cardWidth, anchorY - cardHeight / 2};
+      originX = 1.0;
+      break;
+    case classtime::PresentationSettings::Edge::Right:
+      preferred = {windowRect.right + gap, anchorY - cardHeight / 2};
+      originX = 0.0;
+      break;
+    default:
+      preferred = {anchorX - cardWidth / 2, windowRect.bottom + gap};
+      originY = 0.0;
+      break;
+  }
+  const POINT position = ClampToWorkArea(preferred, info.rcWork, cardWidth, cardHeight);
+  detailPopup_.HorizontalOffset((position.x - origin.x) / scale);
+  detailPopup_.VerticalOffset((position.y - origin.y) / scale);
+  if (!Motion::Enabled()) {
+    detailCard_.Opacity(1);
+    detailCard_.RenderTransform(nullptr);
+    detailPopup_.IsOpen(true);
+    return;
+  }
+  detailCard_.RenderTransformOrigin({static_cast<float>(originX), static_cast<float>(originY)});
+  ScaleTransform scaleTransform;
+  constexpr double kInitialScale = 0.975;
+  scaleTransform.ScaleX(kInitialScale);
+  scaleTransform.ScaleY(kInitialScale);
+  detailCard_.RenderTransform(scaleTransform);
+  detailCard_.Opacity(0);
+  detailPopup_.IsOpen(true);
+  AnimateDetail(true);
+}
+
+void OverlayWindow::RefreshDetail() {
+  if (!detailAnchor_) return;
+  const auto& services = Services::Instance();
+  const auto& segments = services.effectiveSegments();
+  const auto selected = std::find_if(segments.begin(), segments.end(), [this](const auto& segment) {
+    return segment.id == detailSegmentId_;
+  });
+  if (selected == segments.end()) {
+    HideDetail();
+    return;
+  }
+
+  const auto now = NowClock();
+  const int duration = selected->DurationMinutes() * 60;
+  const int elapsed = std::clamp((now.MinutesSinceMidnight() - selected->start.TotalMinutes()) * 60 +
+                                     now.second, 0, duration);
+  const double progress = static_cast<double>(elapsed) / duration;
+  const bool focus = selected->kind == classtime::SegmentKind::Focus;
+  std::wstring title = SegmentKindLabel(selected->kind);
+  if (focus) {
+    const auto ordinal = std::count_if(segments.begin(), selected + 1, [](const auto& segment) {
+      return segment.kind == classtime::SegmentKind::Focus;
+    });
+    title = L"第 " + std::to_wstring(ordinal) + L" 节";
+  }
+  title += elapsed == duration ? L" · 已结束"
+           : now.MinutesSinceMidnight() >= selected->start.TotalMinutes() ? L" · 进行中"
+                                                                         : L" · 尚未开始";
+  detailTitle_.Text(title);
+  const auto label = ToWide(selected->label);
+  const auto range = FormatRange(*selected);
+  const bool genericLabel = label == SegmentKindLabel(selected->kind) ||
+                            title.compare(0, label.size(), label) == 0;
+  detailRange_.Text(genericLabel ? range : label + L"  " + range);
+
+  const auto accent = KindColor(CurrentPalette(), selected->kind);
+  detailMarker_.Background(SolidColorBrush(accent));
+  detailFill_.Background(SolidColorBrush(accent));
+  detailFill_.Width(kDetailTrackWidth * progress);
+  detailPercent_.Text(FormatPercent(progress));
+  detailTiming_.Text(L"已用 " + FormatElapsed(elapsed) + L" / " + FormatElapsed(duration) +
+                     L"    剩余 " + FormatElapsed(duration - elapsed));
+
+  const auto next = selected + 1;
+  detailNext_.Text(next == segments.end() ? L"这是今天最后一段"
+                                         : L"下一段  " + FormatClock(next->start) + L"  " +
+                                               ToWide(next->label));
+  detailMuted_.Visibility(services.config().notifications.muted ? Visibility::Visible
+                                                                  : Visibility::Collapsed);
+}
+
+void OverlayWindow::HideDetail(bool animate) {
+  const bool wasAnchored = detailAnchor_ != nullptr;
+  detailAnchor_ = nullptr;
+  detailSegmentId_.clear();
+  if (animate && detailPopup_.IsOpen() && Motion::Enabled()) {
+    if (wasAnchored) AnimateDetail(false);
+    return;
+  }
+  if (detailPopup_) detailPopup_.IsOpen(false);
+  Motion::Stop(detailMotion_);
+}
+
+void OverlayWindow::AnimateDetail(bool show) {
+  using namespace Media::Animation;
+  const double opacity = detailCard_.Opacity();
+  auto scale = detailCard_.RenderTransform().try_as<ScaleTransform>();
+  const double fromScale = scale ? scale.ScaleX() : 1.0;
+  Motion::Stop(detailMotion_);
+  if (!Motion::Enabled()) {
+    detailCard_.Opacity(1);
+    detailCard_.RenderTransform(nullptr);
+    if (!show) detailPopup_.IsOpen(false);
+    return;
+  }
+
+  scale = ScaleTransform();
+  scale.ScaleX(fromScale);
+  scale.ScaleY(fromScale);
+  detailCard_.RenderTransform(scale);
+  detailCard_.Opacity(opacity);
+  detailMotion_ = Storyboard();
+  const int duration = show ? 190 : 145;
+  SineEase fade;
+  fade.EasingMode(EasingMode::EaseInOut);
+  Motion::Animate(detailMotion_, detailCard_, L"Opacity", opacity, show ? 1 : 0, duration, fade);
+  const double toScale = show ? 1 : 0.975;
+  BackEase movement;
+  movement.EasingMode(show ? EasingMode::EaseOut : EasingMode::EaseIn);
+  movement.Amplitude(show ? 0.25 : 0);
+  Motion::Animate(detailMotion_, scale, L"ScaleX", fromScale, toScale, duration, movement);
+  Motion::Animate(detailMotion_, scale, L"ScaleY", fromScale, toScale, duration, movement);
+  if (!show) {
+    detailMotion_.Completed([this](auto const& sender, auto const&) {
+      if (sender == detailMotion_) HideDetail();
+    });
+  }
+  detailMotion_.Begin();
+}
+
+void OverlayWindow::BindDrag() {
+  using Input::PointerRoutedEventArgs;
+  root_.PointerEntered([this](auto const&, auto const&) {
+    if (edgeTimer_) edgeTimer_.Stop();
+    if ((edgeCollapsed_ || edgeClosing_) && visible_) SetEdgeCollapsed(false, true);
+  });
+  root_.PointerExited([this](auto const&, auto const&) {
+    HideDetail(true);
+    QueueEdgeCollapse();
+  });
+  root_.PointerPressed([this](auto const&, const PointerRoutedEventArgs& args) {
+    if (edgeCollapsed_) {
+      SetEdgeCollapsed(false, true);
+      args.Handled(true);
+      return;
+    }
+    if (edgeClosing_) SetEdgeCollapsed(false, true);
+    if (dragPointer_ ||
+        args.Pointer().PointerDeviceType() != Microsoft::UI::Input::PointerDeviceType::Mouse ||
+        !args.GetCurrentPoint(root_).Properties().IsLeftButtonPressed()) return;
+
+    POINT cursor{};
+    if (!GetCursorPos(&cursor)) return;
+    const ULONGLONG tick = GetTickCount64();
+    const bool withinSequence =
+        lastPressTick_ != 0 && tick - lastPressTick_ <= GetDoubleClickTime() &&
+        std::abs(cursor.x - lastPressPoint_.x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
+        std::abs(cursor.y - lastPressPoint_.y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+    pressCount_ = withinSequence ? std::min(pressCount_ + 1, 3) : 1;
+    lastPressTick_ = tick;
+    lastPressPoint_ = cursor;
+    if (pressCount_ >= 3) {
+      // 连续三击悬浮条/圆环：沿当前边回到居中。
+      pressCount_ = 0;
+      lastPressTick_ = 0;
+      CenterOverlay();
+      args.Handled(true);
+      return;
+    }
+
+    HideDetail();
+    SettleMotion();
+    StopSnap();
+    RECT bounds{};
+    if (!GetWindowRect(hwnd_, &bounds) || !root_.CapturePointer(args.Pointer())) return;
+    dragStart_ = cursor;
+    dragOrigin_ = {bounds.left, bounds.top};
+    dragPointer_ = args.Pointer().PointerId();
+    args.Handled(true);
+  });
+  root_.PointerMoved([this](auto const&, const PointerRoutedEventArgs& args) {
+    if ((edgeCollapsed_ || edgeClosing_) && visible_) {
+      SetEdgeCollapsed(false, true);
+      return;
+    }
+    if (!dragPointer_ || args.Pointer().PointerId() != *dragPointer_) return;
+    POINT cursor{};
+    if (!GetCursorPos(&cursor)) return;
+    const long dx = cursor.x - dragStart_.x;
+    const long dy = cursor.y - dragStart_.y;
+    if (!dragging_ && std::max(std::abs(dx), std::abs(dy)) < 4 * dpiScale_) return;
+    dragging_ = true;
+    pressCount_ = 0;
+    lastPressTick_ = 0;
+    SetWindowPos(hwnd_, nullptr, dragOrigin_.x + dx, dragOrigin_.y + dy, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    args.Handled(true);
+  });
+  root_.PointerReleased([this](auto const&, const PointerRoutedEventArgs& args) {
+    if (!dragPointer_ || args.Pointer().PointerId() != *dragPointer_) return;
+    FinishDrag(true);
+    args.Handled(true);
+  });
+  const auto cancelDrag = [this](auto const&, const PointerRoutedEventArgs& args) {
+    if (dragPointer_ && args.Pointer().PointerId() == *dragPointer_) FinishDrag(false);
+  };
+  root_.PointerCaptureLost(cancelDrag);
+  root_.PointerCanceled(cancelDrag);
+}
+
+void OverlayWindow::CenterOverlay() {
+  if (hwnd_ == nullptr || view_ == View::ScreenEdge) return;
+  SettleMotion();
+  auto& services = Services::Instance();
+  auto presentation = services.config().presentation;
+  if (presentation.offsetX == 0 && presentation.offsetY == 0) return;
+  presentation.offsetX = 0;
+  presentation.offsetY = 0;
+  offsetX_ = 0;
+  offsetY_ = 0;
+  services.UpdatePresentation(presentation);
+
+  RECT bounds{};
+  MONITORINFO info{sizeof(info)};
+  if (!GetWindowRect(hwnd_, &bounds) ||
+      !GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &info)) {
+    LayoutWindow();
+    return;
+  }
+  const int width = bounds.right - bounds.left;
+  const int height = bounds.bottom - bounds.top;
+  POINT target{bounds.left, bounds.top};
+  if (IsSideEdge(edge_)) {
+    target.y = info.rcWork.top + (info.rcWork.bottom - info.rcWork.top - height) / 2;
+  } else {
+    target.x = info.rcWork.left + (info.rcWork.right - info.rcWork.left - width) / 2;
+  }
+  SnapTo(ClampToWorkArea(target, info.rcWork, width, height), info.rcWork);
+}
+
+void OverlayWindow::FinishDrag(bool savePosition) {
+  dragPointer_.reset();
+  root_.ReleasePointerCaptures();
+  const bool moved = std::exchange(dragging_, false);
+  if (!moved) {
+    QueueEdgeCollapse();
+    return;
+  }
+  if (!savePosition) {
+    LayoutWindow();
+    QueueEdgeCollapse();
+    return;
+  }
+
+  RECT bounds{};
+  MONITORINFOEXW info{};
+  info.cbSize = sizeof(info);
+  if (!GetWindowRect(hwnd_, &bounds) ||
+      !GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &info)) {
+    LayoutWindow();
+    QueueEdgeCollapse();
+    return;
+  }
+  dpiScale_ = root_.XamlRoot().RasterizationScale();
+  const RECT& work = info.rcWork;
+  const int width = bounds.right - bounds.left;
+  const int height = bounds.bottom - bounds.top;
+  const int inset = (autoHideAtEdge_ || flushWithEdge_)
+                        ? 0
+                        : static_cast<int>(std::lround(kSnapInsetDip * dpiScale_));
+  const int workWidth = work.right - work.left;
+  const int workHeight = work.bottom - work.top;
+  const int workCenterX = work.left + workWidth / 2;
+  const int workCenterY = work.top + workHeight / 2;
+  const int oldCenterX = bounds.left + width / 2;
+  const int oldCenterY = bounds.top + height / 2;
+
+  // 取最近的一条边；四个方向一视同仁，避免只比较上下。
+  auto targetEdge = classtime::PresentationSettings::Edge::Bottom;
+  int nearest = std::abs(work.bottom - bounds.bottom);
+  if (const int distance = std::abs(bounds.top - work.top); distance < nearest) {
+    nearest = distance;
+    targetEdge = classtime::PresentationSettings::Edge::Top;
+  }
+  if (const int distance = std::abs(bounds.left - work.left); distance < nearest) {
+    nearest = distance;
+    targetEdge = classtime::PresentationSettings::Edge::Left;
+  }
+  if (const int distance = std::abs(work.right - bounds.right); distance < nearest) {
+    targetEdge = classtime::PresentationSettings::Edge::Right;
+  }
+
+  const bool wasSide = IsSideEdge(edge_);
+  const bool nowSide = IsSideEdge(targetEdge);
+  auto& services = Services::Instance();
+  auto presentation = services.config().presentation;
+  edge_ = presentation.edge = targetEdge;
+  monitorId_ = presentation.monitorId = ToUtf8(info.szDevice);
+  // 横向贴边用 offsetX 记水平位置，纵向贴边用 offsetY 记垂直位置；
+  // 另一轴归零，切回原来的方向时仍然居中。
+  if (nowSide) {
+    offsetX_ = presentation.offsetX = 0;
+    offsetY_ = presentation.offsetY =
+        static_cast<int>(std::lround((oldCenterY - workCenterY) / dpiScale_));
+  } else {
+    offsetY_ = presentation.offsetY = 0;
+    offsetX_ = presentation.offsetX =
+        static_cast<int>(std::lround((oldCenterX - workCenterX) / dpiScale_));
+  }
+  services.UpdatePresentation(presentation);
+
+  // 横排改竖排（或反过来）时窗口尺寸会变，直接按新布局落位；
+  // 同方向换边才做回弹动画。
+  if (wasSide != nowSide) {
+    LayoutWindow();
+    QueueEdgeCollapse();
+    return;
+  }
+
+  POINT target{};
+  if (nowSide) {
+    target.x = targetEdge == classtime::PresentationSettings::Edge::Left
+                   ? work.left + inset
+                   : work.right - width - inset;
+    target.y = workCenterY + std::lround(offsetY_ * dpiScale_) - height / 2;
+  } else {
+    target.y = targetEdge == classtime::PresentationSettings::Edge::Top
+                   ? work.top + inset
+                   : work.bottom - height - inset;
+    target.x = workCenterX + std::lround(offsetX_ * dpiScale_) - width / 2;
+  }
+  SnapTo(ClampToWorkArea(target, work, width, height), work);
+}
+
+void OverlayWindow::SnapTo(POINT target, RECT workArea) {
+  RECT bounds{};
+  if (!GetWindowRect(hwnd_, &bounds)) return;
+  const auto move = [this](POINT point) {
+    SetWindowPos(hwnd_, nullptr, point.x, point.y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+  };
+  StopWindowMotion();
+  StopSnap();
+  if (!Motion::Enabled() || (target.x == bounds.left && target.y == bounds.top)) {
+    move(target);
+    QueueEdgeCollapse();
+    return;
+  }
+
+  // 吸附期间跟随 XAML 合成帧，结束后立即取消订阅。
+  const auto started = std::chrono::steady_clock::now();
+  const bool horizontal = IsSideEdge(edge_);
+  const double distance = horizontal ? target.x - bounds.left : target.y - bounds.top;
+  const double overshoot = std::min(18.0 * dpiScale_, 0.08 * std::abs(distance));
+  const double direction = distance >= 0 ? 1.0 : -1.0;
+  lastSnapPosition_ = {bounds.left, bounds.top};
+  snapFrame_ = CompositionTarget::Rendering(
+      [this, move, target, bounds, workArea, started, overshoot, direction,
+       horizontal](auto const&, auto const&) {
+    const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - started)
+                         .count() / 0.30;
+    if (t >= 1.0) {
+      StopSnap();
+      move(target);
+      QueueEdgeCollapse();
+      return;
+    }
+    const double reach = std::min(t / 0.80, 1.0);
+    const double travel = reach * reach * (3 - 2 * reach);
+    const double rebound = std::max((t - 0.68) / 0.32, 0.0);
+    const double wave = std::sin(3.141592653589793 * rebound);
+    const double recoil = overshoot * wave * wave * (1 - rebound);
+    double x = bounds.left + (target.x - bounds.left) * travel;
+    double y = bounds.top + (target.y - bounds.top) * travel;
+    if (horizontal) {
+      x += direction * recoil;
+    } else {
+      y += direction * recoil;
+    }
+    const POINT next = ClampToWorkArea({std::lround(x), std::lround(y)}, workArea,
+                                      bounds.right - bounds.left, bounds.bottom - bounds.top);
+    if (next.x != lastSnapPosition_.x || next.y != lastSnapPosition_.y) {
+      move(next);
+      lastSnapPosition_ = next;
+    }
+  });
+}
+
+void OverlayWindow::StopSnap() {
+  if (auto token = std::exchange(snapFrame_, {}); token.value) {
+    CompositionTarget::Rendering(token);
+  }
+}
+
+void OverlayWindow::StopWindowMotion() {
+  if (auto token = std::exchange(windowMotionFrame_, {}); token.value) {
+    CompositionTarget::Rendering(token);
+  }
+  windowMotionDuration_ = 0;
+}
+
+void OverlayWindow::ApplyWindowRect(const RECT& rect) {
+  if (hwnd_ == nullptr) return;
+  SetWindowPos(hwnd_, HWND_TOPMOST, rect.left, rect.top, rect.right - rect.left,
+               rect.bottom - rect.top, SWP_NOACTIVATE);
+  UpdateWindowShape();
+}
+
+// 贴边位置/偏移变化时让窗口自己“滑”过去：先快后慢，末端最多 16 DIP 的轻微回弹。
+void OverlayWindow::AnimateWindowRect(const RECT& target) {
+  if (hwnd_ == nullptr) return;
+  RECT from{};
+  if (!GetWindowRect(hwnd_, &from)) {
+    ApplyWindowRect(target);
+    QueueEdgeCollapse();
+    return;
+  }
+  StopWindowMotion();
+  const int dx = target.left - from.left;
+  const int dy = target.top - from.top;
+  const int distance = std::max(std::abs(dx), std::abs(dy));
+  const bool sameSize = (target.right - target.left) == (from.right - from.left) &&
+                        (target.bottom - target.top) == (from.bottom - from.top);
+  if (!Motion::Enabled() || !IsWindowVisible(hwnd_) || distance == 0 || !sameSize) {
+    ApplyWindowRect(target);
+    ApplyState();
+    QueueEdgeCollapse();
+    return;
+  }
+
+  const int duration = std::clamp(150 + distance / 4, 170, 380);
+  const double overshoot = std::min(16.0 * dpiScale_, distance * 0.12);
+  windowMotionDuration_ = duration;
+  windowMotionStarted_ = std::chrono::steady_clock::now();
+  lastWindowMotion_ = from;
+  const double total = std::max(1, distance);
+  windowMotionFrame_ = CompositionTarget::Rendering(
+      [this, from, target, duration, overshoot, total](auto const&, auto const&) {
+    const double t =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - windowMotionStarted_)
+            .count() * 1000.0 / duration;
+    if (t >= 1.0) {
+      StopWindowMotion();
+      ApplyWindowRect(target);
+      ApplyState();
+      QueueEdgeCollapse();
+      return;
+    }
+    double eased = 1.0 - std::pow(1.0 - t, 3.0);
+    const double settle = std::clamp((t - 0.55) / 0.45, 0.0, 1.0);
+    const double wave = std::sin(3.141592653589793 * settle);
+    eased += (overshoot / total) * wave * wave;
+    const int width = target.right - target.left;
+    const int height = target.bottom - target.top;
+    RECT next{};
+    next.left = from.left + static_cast<int>(std::lround((target.left - from.left) * eased));
+    next.top = from.top + static_cast<int>(std::lround((target.top - from.top) * eased));
+    next.right = next.left + width;
+    next.bottom = next.top + height;
+    if (EqualRect(&next, &lastWindowMotion_)) return;
+    lastWindowMotion_ = next;
+    SetWindowPos(hwnd_, nullptr, next.left, next.top, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+  });
+}
+
+void OverlayWindow::QueueEdgeCollapse() {
+  if (!visible_ || view_ == View::ScreenEdge || !autoHideAtEdge_ || edgeCollapsed_ || edgeClosing_ ||
+      dragPointer_ || snapFrame_.value || windowMotionFrame_.value) return;
+  if (!edgeTimer_) {
+    edgeTimer_ = window_.DispatcherQueue().CreateTimer();
+    edgeTimer_.IsRepeating(false);
+    edgeTimer_.Interval(std::chrono::milliseconds(430));
+    edgeTimer_.Tick([this](auto const&, auto const&) {
+      RECT bounds{};
+      POINT cursor{};
+      if (visible_ && autoHideAtEdge_ && !dragPointer_ && !snapFrame_.value &&
+          GetWindowRect(hwnd_, &bounds) &&
+          GetCursorPos(&cursor) && !PtInRect(&bounds, cursor)) {
+        SetEdgeCollapsed(true, true);
+      }
+    });
+  }
+  edgeTimer_.Stop();
+  edgeTimer_.Start();
+}
+
+void OverlayWindow::SetEdgeCollapsed(bool collapsed, bool animate) {
+  if (edgeTimer_) edgeTimer_.Stop();
+  SettleMotion();
+  const bool useMotion = animate && Motion::Enabled();
+  if (!collapsed && edgeClosing_) {
+    const auto from = Motion::ReadPose(root_, EdgeContent());
+    ResetEdgeMotion();
+    if (useMotion) {
+      edgeMotion_ = Motion::Slide(root_, EdgeContent(), from, {}, 145);
+      edgeMotion_.Begin();
+    }
+    return;
+  }
+  if (edgeCollapsed_ == collapsed || (edgeClosing_ && useMotion)) return;
+  if (collapsed && useMotion) {
+    const auto from = Motion::ReadPose(root_, EdgeContent());
+    Motion::Stop(edgeMotion_);
+    HideDetail(true);
+    edgeClosing_ = true;
+    const POINT shift = EdgeShift(edge_, 6);
+    edgeMotion_ = Motion::Slide(root_, EdgeContent(), from,
+                               {0, static_cast<double>(shift.y), static_cast<double>(shift.x)},
+                               145);
+    edgeMotion_.Completed([this](auto const& sender, auto const&) {
+      if (sender != edgeMotion_) return;
+      POINT cursor{};
+      if (GetCursorPos(&cursor) && GetAncestor(WindowFromPoint(cursor), GA_ROOT) == hwnd_) {
+        SetEdgeCollapsed(false, true);
+        return;
+      }
+      ApplyEdgeCollapsed(true, true);
+    });
+    edgeMotion_.Begin();
+    return;
+  }
+  ApplyEdgeCollapsed(collapsed, useMotion);
+}
+
+void OverlayWindow::ApplyEdgeCollapsed(bool collapsed, bool fade) {
+  ResetEdgeMotion();
+  edgeCollapsed_ = collapsed;
+  HideDetail();
+  if (fade) {
+    const POINT shift = EdgeShift(edge_, collapsed ? 0 : 5);
+    edgeMotion_ = Motion::Slide(root_, EdgeContent(), {0, static_cast<double>(shift.y),
+                                                       static_cast<double>(shift.x)},
+                               {}, collapsed ? 105 : 170);
+  }
+  UpdateVisibleLayer();
+  LayoutWindow();
+  if (collapsed) {
+    StopTimer();
+  } else {
+    StartTimer();
+    ApplyState();
+  }
+  if (edgeMotion_) edgeMotion_.Begin();
+}
+
+void OverlayWindow::ResetEdgeMotion() {
+  edgeClosing_ = false;
+  Motion::Stop(edgeMotion_);
+  root_.Opacity(1);
+  EdgeContent().RenderTransform(nullptr);
+}
+
+FrameworkElement OverlayWindow::EdgeContent() const {
+  if (edgeCollapsed_) return edgeHandle_;
+  if (view_ == View::Ring) return ringRoot_;
+  return barRoot_;
+}
+
+void OverlayWindow::UpdateVisibleLayer() {
+  // 形态切换的淡出阶段，旧层要先留在屏幕上跟着淡走，不能立刻隐藏。
+  const auto show = [this](Layer layer, const FrameworkElement& element, bool wanted) {
+    element.Visibility(wanted || morphOutgoing_ == layer ? Visibility::Visible
+                                                         : Visibility::Collapsed);
+  };
+  show(Layer::Bar, barRoot_, !edgeCollapsed_ && view_ == View::Bar);
+  show(Layer::Ring, ringRoot_, !edgeCollapsed_ && view_ == View::Ring);
+  show(Layer::Handle, edgeHandle_, edgeCollapsed_);
+}
+
+void OverlayWindow::BeginMorph() {
+  const uint64_t generation = ++motionGeneration_;
+  // 旧层已经由 UpdateVisibleLayer 保留在屏幕上，这里只淡出 root，
+  // 等它完全透明后再落到新布局，避免尺寸/朝向变化中途重排。
+  contentMotion_ = Motion::Fade(root_, root_.Opacity(), 0.0, 95, true);
+  contentMotion_.Completed([this, generation](auto const& sender, auto const&) {
+    if (generation != motionGeneration_ || sender != contentMotion_) return;
+    LayoutWindow();
+    if (!visible_ || edgeCollapsed_) {
+      FinishMorph();
+      ApplyState();
+      QueueEdgeCollapse();
+      return;
+    }
+    ApplyState();
+    // 落到新布局后旧层立即退场，再把 root 恢复不透明，由新内容自己淡入。
+    morphOutgoing_ = Layer::None;
+    UpdateVisibleLayer();
+    root_.Opacity(1);
+    contentMotion_ = Motion::Pop(EdgeContent(), windowWidth_ / 2.0 / dpiScale_,
+                                 windowHeight_ / 2.0 / dpiScale_, 0.94, 0.0, 190);
+    contentMotion_.Completed([this, generation](auto const& done, auto const&) {
+      if (generation != motionGeneration_ || done != contentMotion_) return;
+      FinishMorph();
+      QueueEdgeCollapse();
+    });
+    contentMotion_.Begin();
+  });
+  contentMotion_.Begin();
+}
+
+void OverlayWindow::FinishMorph() {
+  Motion::Stop(contentMotion_);
+  morphOutgoing_ = Layer::None;
+  root_.Opacity(1);
+  barRoot_.RenderTransform(nullptr);
+  ringRoot_.RenderTransform(nullptr);
+  UpdateVisibleLayer();
+}
+
+// 用户开始拖动/收起时，把进行中的形态过渡立即收尾，避免两套动画抢同一批元素。
+void OverlayWindow::SettleMotion() {
+  if (morphOutgoing_ == Layer::None && contentMotion_ == nullptr) return;
+  ++motionGeneration_;
+  FinishMorph();
+  LayoutWindow();
+}
+
 void OverlayWindow::ApplyPresentation() {
-  const auto& presentation = Services::Instance().config().presentation;
-  const bool ring = presentation.view == classtime::PresentationSettings::View::Ring;
+  const classtime::PresentationSettings presentation =
+      Services::Instance().config().presentation;
+  const View previousView = view_;
+  const auto previousEdge = edge_;
+  const bool viewChanged = presentation.view != view_;
+  const bool wasScreenEdge = previousView == View::ScreenEdge;
   const bool allDay = presentation.scope == classtime::PresentationSettings::Scope::AllDay;
-  const bool layoutChanged = ring != ringMode_ || allDay != allDay_ ||
-                             presentation.edge != edge_ || presentation.offsetX != offsetX_ ||
-                             presentation.offsetY != offsetY_;
-  ringMode_ = ring;
+  const bool autoHideChanged = presentation.autoHideAtEdge != autoHideAtEdge_;
+  const bool flushChanged = presentation.flushWithEdge != flushWithEdge_;
+  const bool edgeChanged = presentation.edge != edge_;
+  const bool offsetChanged = presentation.offsetX != offsetX_ || presentation.offsetY != offsetY_;
+  const bool monitorChanged = presentation.monitorId != monitorId_;
+  const bool layoutChanged = viewChanged || monitorChanged || edgeChanged || offsetChanged ||
+                             flushChanged;
+  const bool sideChanged = IsSideEdge(previousEdge) != IsSideEdge(presentation.edge);
+  const bool canAnimate = visible_ && hwnd_ != nullptr && !IsIconic(hwnd_) &&
+                          IsWindowVisible(hwnd_) && !dragPointer_ && Motion::Enabled();
+
+  view_ = presentation.view;
   allDay_ = allDay;
+  monitorId_ = presentation.monitorId;
   edge_ = presentation.edge;
   offsetX_ = presentation.offsetX;
   offsetY_ = presentation.offsetY;
+  flushWithEdge_ = presentation.flushWithEdge;
 
-  barRoot_.Visibility(ring ? Visibility::Collapsed : Visibility::Visible);
-  ringRoot_.Visibility(ring ? Visibility::Visible : Visibility::Collapsed);
-
-  if (layoutChanged) {
-    visualSignature_.clear();  // 强制按新范围重建分节
+  autoHideAtEdge_ = presentation.autoHideAtEdge;
+  if (view_ == View::ScreenEdge) {
+    if (viewChanged) {
+      if (dragPointer_) FinishDrag(false);
+      StopSnap();
+      StopWindowMotion();
+      ++motionGeneration_;
+      if (edgeTimer_) edgeTimer_.Stop();
+      ResetEdgeMotion();
+      HideDetail();
+      edgeCollapsed_ = false;
+      UpdateVisibleLayer();
+      ShowWindow(hwnd_, SW_HIDE);
+    }
+    if (visible_) {
+      RefreshScreenEdge();
+      StartTimer();
+    }
+    return;
+  }
+  if (wasScreenEdge) {
+    HideScreenEdge();
+    edgeCollapsed_ = autoHideAtEdge_;
+    UpdateVisibleLayer();
     LayoutWindow();
+    if (visible_) ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    if (edgeCollapsed_) StopTimer();
+    ApplyState();
+    return;
+  }
+  if (autoHideChanged) {
+    if (visible_ && (edgeCollapsed_ != autoHideAtEdge_ || edgeClosing_)) {
+      StopSnap();
+      SetEdgeCollapsed(autoHideAtEdge_, true);
+      return;
+    }
+    edgeCollapsed_ = autoHideAtEdge_;
+  }
+
+  // 更换显示形式或从横排变竖排时，窗口尺寸会变：先淡出旧内容，
+  // 落位后再淡入，过程里不会看到元素被临时挤扁。
+  const bool morph = canAnimate && !edgeCollapsed_ && !monitorChanged &&
+                     (viewChanged || sideChanged);
+  if (morph && (layoutChanged || autoHideChanged)) {
+    HideDetail();
+    morphOutgoing_ = previousView == View::Ring   ? Layer::Ring
+                     : previousView == View::Bar ? Layer::Bar
+                                                 : Layer::Handle;
+    ++motionGeneration_;
+    ResetEdgeMotion();
+    StopSnap();
+    StopWindowMotion();
+    UpdateVisibleLayer();
+    BeginMorph();
+    return;
+  }
+
+  UpdateVisibleLayer();
+  if (layoutChanged || autoHideChanged) {
+    HideDetail();
+    ResetEdgeMotion();
+    StopSnap();
+    // 同尺寸换边只移动位置，让窗口自己滑过去；换显示器或关闭动效时直接落位。
+    const bool glide = canAnimate && !monitorChanged;
+    if (glide) {
+      LayoutWindow(true);
+      return;
+    }
+    LayoutWindow();
+    QueueEdgeCollapse();
   }
   ApplyState();
 }
 
-void OverlayWindow::LayoutWindow() {
-  if (hwnd_ == nullptr) return;
+void OverlayWindow::LayoutWindow(bool animate) {
+  if (hwnd_ == nullptr || view_ == View::ScreenEdge) return;
+  const RECT target = ComputeLayoutRect();
+  if (IsRectEmpty(&target)) return;
+  if (animate) {
+    AnimateWindowRect(target);
+    return;
+  }
+  ApplyWindowRect(target);
+}
+
+// 只计算目标矩形并同步与尺寸相关的样式，不动窗口本身。
+RECT OverlayWindow::ComputeLayoutRect() {
+  if (hwnd_ == nullptr || view_ == View::ScreenEdge) return {};
+  HMONITOR monitor = FindMonitor(monitorId_);
+  MONITORINFO info{sizeof(info)};
+  if (!GetMonitorInfoW(monitor, &info)) return {};
+  const RECT work = info.rcWork;
+  if (MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) != monitor) {
+    SetWindowPos(hwnd_, nullptr, work.left, work.top, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+  }
+
   dpiScale_ = static_cast<double>(GetDpiForWindow(hwnd_)) / 96.0;
   if (dpiScale_ <= 0.0) dpiScale_ = 1.0;
 
-  const double widthDip = ringMode_ ? kRingWidthDip : kBarWidthDip;
-  const double heightDip = ringMode_ ? kRingHeightDip : kBarHeightDip;
-  windowWidth_ = static_cast<int>(std::lround(widthDip * dpiScale_));
-  windowHeight_ = static_cast<int>(std::lround(heightDip * dpiScale_));
-
-  HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY);
-  MONITORINFO info{};
-  info.cbSize = sizeof(info);
-  GetMonitorInfoW(monitor, &info);
-  const RECT work = info.rcWork;
+  const bool ring = view_ == View::Ring;
+  const bool side = IsSideEdge(edge_);
   const int workWidth = work.right - work.left;
-  int x = work.left + (workWidth - windowWidth_) / 2 + static_cast<int>(offsetX_ * dpiScale_);
-  x = std::max<int>(work.left, std::min<int>(x, work.right - windowWidth_));
-  const int edgeOffset = static_cast<int>(offsetY_ * dpiScale_);
-  const int y = edge_ == classtime::PresentationSettings::Edge::Top
-                    ? work.top + edgeOffset
-                    : work.bottom - windowHeight_ - edgeOffset;
+  const int workHeight = work.bottom - work.top;
 
-  SetWindowPos(hwnd_, HWND_TOPMOST, x, y, windowWidth_, windowHeight_,
-               SWP_NOACTIVATE | (visible_ ? SWP_SHOWWINDOW : 0));
+  double widthDip = kBarWidthDip;
+  double heightDip = kBarHeightDip;
+  if (ring) {
+    widthDip = heightDip = kRingDiameterDip;
+  } else if (side) {
+    widthDip = kSideBarThicknessDip;
+    const double available = std::max(80.0, workHeight / dpiScale_ - 2.0 * kSnapInsetDip);
+    heightDip = std::min(kSideBarLengthDip, available);
+  }
+  const int fullWidth = std::min(static_cast<int>(std::lround(widthDip * dpiScale_)), workWidth);
+  const int fullHeight = std::min<int>(static_cast<int>(std::lround(heightDip * dpiScale_)), workHeight);
+  const int square = ring ? std::min(fullWidth, fullHeight) : 0;
+  windowWidth_ = ring ? square : fullWidth;
+  windowHeight_ = ring ? square : fullHeight;
+
+  // 左右贴边时，分节长条转为竖向排列；圆环不受影响。
+  segmentPanel_.Orientation(side ? Orientation::Vertical : Orientation::Horizontal);
+  barRoot_.Padding(side ? Thickness{0, kBarInsetDip, 0, kBarInsetDip}
+                        : Thickness{kBarInsetDip, 0, kBarInsetDip, 0});
+  edgeGrip_.Width(side ? 3 : 34);
+  edgeGrip_.Height(side ? 34 : 3);
+  // 紧贴边缘时把靠边一侧的圆角削平，视觉上像从任务栏/屏幕边缘长出来。
+  CornerRadius corner{12, 12, 12, 12};
+  if (flushWithEdge_) {
+    switch (edge_) {
+      case classtime::PresentationSettings::Edge::Top: corner = {0, 0, 12, 12}; break;
+      case classtime::PresentationSettings::Edge::Left: corner = {0, 12, 12, 0}; break;
+      case classtime::PresentationSettings::Edge::Right: corner = {12, 0, 0, 12}; break;
+      default: corner = {12, 12, 0, 0}; break;
+    }
+  }
+  barRoot_.CornerRadius(corner);
+
+  if (edgeCollapsed_) {
+    const int handleW = static_cast<int>(std::lround(kHandleWidthDip * dpiScale_));
+    const int handleH = static_cast<int>(std::lround(kHandleHeightDip * dpiScale_));
+    if (side) {
+      windowWidth_ = std::min(windowWidth_, handleH);
+      windowHeight_ = std::min(windowHeight_, handleW);
+    } else {
+      windowWidth_ = std::min(windowWidth_, handleW);
+      windowHeight_ = std::min(windowHeight_, handleH);
+    }
+  }
+
+  const int inset = (autoHideAtEdge_ || flushWithEdge_)
+                        ? 0
+                        : static_cast<int>(std::lround(kSnapInsetDip * dpiScale_));
+  const int workCenterX = work.left + workWidth / 2;
+  const int workCenterY = work.top + workHeight / 2;
+  int x = 0;
+  int y = 0;
+  if (side) {
+    x = edge_ == classtime::PresentationSettings::Edge::Left
+            ? work.left + inset
+            : work.right - windowWidth_ - inset;
+    y = workCenterY + std::lround(offsetY_ * dpiScale_) - windowHeight_ / 2;
+  } else {
+    y = edge_ == classtime::PresentationSettings::Edge::Top
+            ? work.top + inset
+            : work.bottom - windowHeight_ - inset;
+    x = workCenterX + std::lround(offsetX_ * dpiScale_) - windowWidth_ / 2;
+  }
+  const POINT position = ClampToWorkArea({x, y}, work, windowWidth_, windowHeight_);
+  return RECT{position.x, position.y, position.x + windowWidth_, position.y + windowHeight_};
+}
+
+void OverlayWindow::UpdateWindowShape() {
+  if (!hwnd_) return;
+  RECT desired{};
+  if (view_ == View::Ring && !edgeCollapsed_) {
+    RECT window{};
+    if (!GetWindowRect(hwnd_, &window)) return;
+    const int width = window.right - window.left;
+    const int height = window.bottom - window.top;
+    const int diameter = std::min(width, height);
+    if (diameter <= 0) return;
+    // 给原生窗口边线留出裁剪余量，避免表盘切点出现残边。
+    const int inset = std::min<int>(diameter / 8, std::lround(2.0 * GetDpiForWindow(hwnd_) / 96.0));
+    desired.left = (width - diameter) / 2 + inset;
+    desired.top = (height - diameter) / 2 + inset;
+    desired.right = desired.left + diameter - 2 * inset;
+    desired.bottom = desired.top + diameter - 2 * inset;
+  }
+  // 紧贴边缘的横条需要直角落到任务栏/屏幕边缘；圆环本身用椭圆裁剪。
+  const bool wantSharp = !IsRectEmpty(&desired) || (view_ == View::Bar && flushWithEdge_);
+  if (EqualRect(&desired, &ringRegionBounds_) && wantSharp == sharpWindowCorners_) return;
+
+  HRGN region = nullptr;
+  if (!IsRectEmpty(&desired)) {
+    region = CreateEllipticRgn(desired.left, desired.top, desired.right, desired.bottom);
+    if (!region) return;
+  }
+  if (SetWindowRgn(hwnd_, region, IsWindowVisible(hwnd_))) {
+    ringRegionBounds_ = desired;
+    sharpWindowCorners_ = wantSharp;
+    // DWM 的外框独立于窗口裁剪区域：圆环和紧贴边缘时都不要方形外框。
+    const COLORREF border = wantSharp ? DWMWA_COLOR_NONE : DWMWA_COLOR_DEFAULT;
+    DwmSetWindowAttribute(hwnd_, DWMWA_BORDER_COLOR, &border, sizeof(border));
+    const auto corners = wantSharp ? DWMWCP_DONOTROUND : DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
+  } else if (region) {
+    DeleteObject(region);
+  }
 }
 
 void OverlayWindow::StartTimer() {
@@ -369,26 +1310,34 @@ void OverlayWindow::StopTimer() {
 void OverlayWindow::ShowOverlay() {
   if (hwnd_ == nullptr) return;
   visible_ = true;
+  ApplyPresentation();
+  if (view_ == View::ScreenEdge) return;
   LayoutWindow();
-  // WS_EX_NOACTIVATE：显示与激活都不会把焦点从当前应用抢走。
-  window_.Activate();
   ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-  SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-  StartTimer();
+  if (!edgeCollapsed_) StartTimer();
   ApplyState();
-
 }
 
 void OverlayWindow::HideOverlay() {
   visible_ = false;
+  HideDetail();
+  if (dragPointer_) FinishDrag(false);
+  StopSnap();
+  StopWindowMotion();
+  ++motionGeneration_;
+  FinishMorph();
+  if (edgeTimer_) edgeTimer_.Stop();
+  ResetEdgeMotion();
+  edgeCollapsed_ = view_ != View::ScreenEdge && autoHideAtEdge_;
+  UpdateVisibleLayer();
   StopTimer();
+  HideScreenEdge();
   if (hwnd_ != nullptr) ShowWindow(hwnd_, SW_HIDE);
 }
 
 void OverlayWindow::Close() {
-  StopTimer();
   if (window_ != nullptr) {
+    HideOverlay();
     window_.Close();
     window_ = nullptr;
     hwnd_ = nullptr;
@@ -396,120 +1345,216 @@ void OverlayWindow::Close() {
 }
 
 void OverlayWindow::ApplyState() {
-  if (window_ == nullptr || hwnd_ == nullptr) return;
+  if (window_ == nullptr || hwnd_ == nullptr || edgeCollapsed_) return;
+  switch (view_) {
+    case View::ScreenEdge:
+      if (visible_) RefreshScreenEdge();
+      return;
+    case View::Ring: RefreshRing(); break;
+    case View::Bar: RefreshBar(); break;
+  }
+  RefreshDetail();
+}
+
+void OverlayWindow::RefreshScreenEdge() {
+  // 复用可见浮窗的刷新节奏，重新读取工作区以适应分辨率或任务栏变化。
+  const HMONITOR monitor = FindMonitor(monitorId_);
+  MONITORINFO info{sizeof(info)};
+  if (!GetMonitorInfoW(monitor, &info)) {
+    HideScreenEdge();
+    return;
+  }
+  const RECT& work = info.rcWork;
+  const int width = work.right - work.left;
+  const int height = work.bottom - work.top;
+  if (std::min(width, height) < 3) {
+    HideScreenEdge();
+    return;
+  }
+  if (MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) != monitor) {
+    SetWindowPos(hwnd_, nullptr, work.left, work.top, 1, 1,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+  }
   const auto& services = Services::Instance();
-  const auto& presentation = services.config().presentation;
-  if (presentation.view == classtime::PresentationSettings::View::Ring) {
-    RefreshRing();
-  } else {
-    RefreshBar();
+  const int thickness = std::clamp<int>(
+      std::lround(services.config().presentation.screenEdgeThickness * GetDpiForWindow(hwnd_) / 96.0),
+      1, std::min(width, height) / 3);
+
+  // 左上角出发：上、右、下、左。每个像素只属于一个窗口，半透明转角不会重叠。
+  const RECT bounds[] = {
+      {work.left, work.top, work.right, work.top + thickness},
+      {work.right - thickness, work.top + thickness, work.right, work.bottom},
+      {work.left, work.bottom - thickness, work.right - thickness, work.bottom},
+      {work.left, work.top + thickness, work.left + thickness, work.bottom - thickness},
+  };
+  const int lengths[] = {width, height - thickness, width - thickness, height - 2 * thickness};
+  const int perimeter = 2 * (width + height - 2 * thickness);
+
+  const auto now = NowClock();
+  const auto plan = services.PlanFor(now);
+  const auto snapshot = classtime::Evaluate(plan.segments, now);
+  const auto palette = CurrentPalette();
+  auto accent = palette.accent;
+  // 全天范围也跟随当前状态着色：上课用强调色、课间用休息色、午休用暖黄色。
+  if (snapshot.current) accent = KindColor(palette, snapshot.current->kind);
+  double progress = 0;
+  if (!plan.segments.empty()) {
+    if (allDay_) {
+      int firstMinute = plan.segments.front().start.TotalMinutes();
+      int lastMinute = plan.segments.front().end.TotalMinutes();
+      for (const auto& segment : plan.segments) {
+        firstMinute = std::min(firstMinute, segment.start.TotalMinutes());
+        lastMinute = std::max(lastMinute, segment.end.TotalMinutes());
+      }
+      const int elapsed = (now.hour * 60 + now.minute - firstMinute) * 60 + now.second;
+      if (lastMinute > firstMinute) {
+        progress = std::clamp(static_cast<double>(elapsed) / ((lastMinute - firstMinute) * 60),
+                              0.0, 1.0);
+      }
+    } else {
+      progress = snapshot.progress;
+    }
+  }
+  const auto fill = PremultipliedBgra(accent);
+  const auto track = PremultipliedBgra(Windows::UI::ColorHelper::FromArgb(172, 100, 117, 137));
+  int remaining = static_cast<int>(std::lround(progress * perimeter));
+  for (size_t i = 0; i < screenEdgeStrips_.size(); ++i) {
+    auto& strip = screenEdgeStrips_[i];
+    if (!strip.hwnd) {
+      strip.hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
+                                       WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                                   L"STATIC", L"ClassTime Screen Edge", WS_POPUP,
+                                   bounds[i].left, bounds[i].top, 0, 0, nullptr, nullptr,
+                                   GetModuleHandleW(nullptr), nullptr);
+    }
+    const int pixels = std::clamp(remaining, 0, lengths[i]);
+    remaining -= pixels;
+    if (pixels == strip.filledPixels && fill == strip.fill && track == strip.track &&
+        EqualRect(&bounds[i], &strip.bounds)) continue;
+    if (!strip.hwnd || !RenderEdgeStrip(strip.hwnd, bounds[i], i % 2 == 0, i >= 2,
+                                       pixels, fill, track)) {
+      HideScreenEdge();
+      return;
+    }
+    strip.bounds = bounds[i];
+    strip.filledPixels = pixels;
+    strip.fill = fill;
+    strip.track = track;
+    if (!IsWindowVisible(strip.hwnd)) ShowWindow(strip.hwnd, SW_SHOWNOACTIVATE);
+  }
+}
+
+void OverlayWindow::HideScreenEdge() {
+  for (auto& strip : screenEdgeStrips_) {
+    if (strip.hwnd) DestroyWindow(strip.hwnd);
+    strip = {};
   }
 }
 
 void OverlayWindow::RefreshBar() {
   const auto& services = Services::Instance();
   const auto& snapshot = services.snapshot();
-  const auto& config = services.config();
   const auto now = NowClock();
   const Palette palette = CurrentPalette();
 
-  if (snapshot.current.has_value()) {
-    const auto& current = *snapshot.current;
-    if (current.kind == classtime::SegmentKind::Focus) {
-      stateText_.Text(L"第 " + std::to_wstring(current.focusOrdinal) + L" 节");
-      progressText_.Text(FormatPercent(snapshot.progress));
-      progressText_.Visibility(Visibility::Visible);
-      ringLabel_.Text(L"第 " + std::to_wstring(current.focusOrdinal) + L" 节");
-    } else {
-      stateText_.Text(SegmentKindLabel(current.kind));
-      progressText_.Text(FormatPercent(snapshot.progress));
-      progressText_.Visibility(Visibility::Visible);
-      ringLabel_.Text(SegmentKindLabel(current.kind));
-    }
-    stateText_.Foreground(SolidColorBrush(KindColor(palette, current.kind)));
-  } else {
-    stateText_.Text(L"空闲");
-    progressText_.Visibility(Visibility::Collapsed);
-    ringLabel_.Text(L"空闲");
-  }
-
-  if (snapshot.next.has_value()) {
-    nextText_.Text((snapshot.next->kind == classtime::SegmentKind::Focus
-                        ? L"下一节 "
-                        : L"接下来 ") +
-                   FormatClock(snapshot.next->start) + L" · " + ToWide(snapshot.next->label));
-  } else if (snapshot.hasSchedule) {
-    nextText_.Text(L"今天的安排已结束");
-  } else {
-    nextText_.Text(L"今天没有安排");
-  }
-  pauseText_.Visibility(config.notifications.muted ? Visibility::Visible : Visibility::Collapsed);
-
-  // 按当前显示范围取时段；范围或作息变化时重建分节。
+  RECT client{};
+  if (!GetClientRect(hwnd_, &client)) return;
+  const int clientWidth = client.right - client.left;
+  const int clientHeight = client.bottom - client.top;
+  const bool vertical = IsSideEdge(edge_);
   const auto visible = services.VisibleSegments();
-  std::string signature;
+  std::string signature = std::string(vertical ? "v:" : "h:") + std::to_string(clientWidth) +
+                          ":" + std::to_string(clientHeight) + ":" + std::to_string(dpiScale_);
   for (const auto& segment : visible) {
-    signature += segment.id + ":" + std::to_string(segment.DurationMinutes()) + ":" +
-                 classtime::SegmentKindToString(segment.kind) + ";";
+    signature += ":" + segment.id + ":" + std::to_string(segment.DurationMinutes()) + ":" +
+                 classtime::SegmentKindToString(segment.kind);
   }
-  signature += ringMode_ ? "r" : "b";
 
   if (signature != visualSignature_) {
+    HideDetail();
     visualSignature_ = signature;
     visuals_.clear();
     segmentPanel_.Children().Clear();
 
     if (visible.empty()) {
-      auto empty = MakeText(12, WithAlpha(palette.foreground, 130));
-      empty.Text(L"今天暂无安排");
+      auto empty = MakeText(vertical ? 11 : 12, WithAlpha(palette.foreground, 130));
+      empty.Text(vertical ? L"无安排" : L"今天暂无安排");
       segmentPanel_.Children().Append(empty);
     } else {
       int totalMinutes = 0;
       for (const auto& segment : visible) totalMinutes += std::max(1, segment.DurationMinutes());
-      const double gaps = 4.0 * static_cast<double>(visible.size() - 1);
-      const double available = std::max(120.0, kSegmentAreaWidth - gaps);
+      const double contentLength =
+          vertical ? std::max(1.0, clientHeight / dpiScale_ - 2 * kBarInsetDip)
+                   : std::max(1.0, clientWidth / dpiScale_ - 2 * kBarInsetDip);
+      const double gap = std::min(4.0, contentLength / (2.0 * visible.size()));
+      segmentPanel_.Spacing(gap);
+      const double available = contentLength - gap * (visible.size() - 1);
+      const double minimum = std::min(vertical ? 4.0 : 6.0, available / (2.0 * visible.size()));
+      const double weightedLength = available - minimum * visible.size();
 
       for (size_t i = 0; i < visible.size(); ++i) {
         const auto& segment = visible[i];
         SegmentVisual visual;
-        visual.id = segment.id;
-        visual.kind = segment.kind;
-
-        double width = available * static_cast<double>(segment.DurationMinutes()) / totalMinutes;
-        width = std::max(6.0, width);
-        visual.width = width;
+        const double length = minimum + weightedLength * segment.DurationMinutes() / totalMinutes;
+        visual.length = length;
 
         visual.host = Grid();
-        visual.host.Width(width);
-        visual.host.Height(14);
+        visual.host.Background(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)));
+        if (vertical) {
+          visual.host.Width(kBarHostThicknessDip);
+          visual.host.Height(length);
+          visual.host.HorizontalAlignment(HorizontalAlignment::Center);
+        } else {
+          visual.host.Width(length);
+          visual.host.Height(kBarHostThicknessDip);
+        }
+        visual.host.VerticalAlignment(VerticalAlignment::Center);
 
+        const double thickness = segment.kind == classtime::SegmentKind::Break ? 6 : 9;
         visual.track = Shapes::Rectangle();
         visual.track.RadiusX(4);
         visual.track.RadiusY(4);
-        visual.track.Height(segment.kind == classtime::SegmentKind::Break ? 6 : 9);
         visual.track.Fill(SolidColorBrush(WithAlpha(palette.foreground, 26)));
-        visual.track.VerticalAlignment(VerticalAlignment::Center);
-        visual.track.HorizontalAlignment(HorizontalAlignment::Stretch);
+        if (vertical) {
+          visual.track.Width(thickness);
+          visual.track.HorizontalAlignment(HorizontalAlignment::Center);
+          visual.track.VerticalAlignment(VerticalAlignment::Stretch);
+        } else {
+          visual.track.Height(thickness);
+          visual.track.HorizontalAlignment(HorizontalAlignment::Stretch);
+          visual.track.VerticalAlignment(VerticalAlignment::Center);
+        }
         visual.host.Children().Append(visual.track);
 
         visual.fill = Shapes::Rectangle();
         visual.fill.RadiusX(4);
         visual.fill.RadiusY(4);
-        visual.fill.Height(segment.kind == classtime::SegmentKind::Break ? 6 : 9);
         visual.fill.Fill(SolidColorBrush(KindColor(palette, segment.kind)));
-        visual.fill.VerticalAlignment(VerticalAlignment::Center);
-        visual.fill.HorizontalAlignment(HorizontalAlignment::Left);
-        visual.fill.Width(0);
+        if (vertical) {
+          // 填充和轨道同宽，否则会铺满整个 24 DIP 的宿主，看起来像一根粗柱子。
+          visual.fill.Width(thickness);
+          visual.fill.HorizontalAlignment(HorizontalAlignment::Center);
+          visual.fill.VerticalAlignment(VerticalAlignment::Top);
+          visual.fill.Height(0);
+        } else {
+          // 横向同理：高度必须跟轨道一致，不能 Stretch 到 24 DIP。
+          visual.fill.Height(thickness);
+          visual.fill.VerticalAlignment(VerticalAlignment::Center);
+          visual.fill.HorizontalAlignment(HorizontalAlignment::Left);
+          visual.fill.Width(0);
+        }
         visual.host.Children().Append(visual.fill);
 
-        ToolTipService::SetToolTip(visual.host, box_value(L""));
+        visual.host.PointerMoved([this, id = segment.id](auto const& sender, auto const&) {
+          ShowDetail(sender.template as<FrameworkElement>(), id);
+        });
         segmentPanel_.Children().Append(visual.host);
         visuals_.push_back(visual);
       }
     }
   }
 
-  // 更新填充宽度与 hover 文案
+  // 更新填充长度，悬停卡独立更新。
   for (size_t i = 0; i < visuals_.size() && i < visible.size(); ++i) {
     const auto& segment = visible[i];
     double progress = 0.0;
@@ -519,122 +1564,76 @@ void OverlayWindow::RefreshBar() {
                now.hour * 3600 + now.minute * 60 + now.second) {
       progress = 1.0;
     }
-    visuals_[i].fill.Width(visuals_[i].width * progress);
-
-    std::wstring tip = ToWide(segment.label);
-    if (segment.kind == classtime::SegmentKind::Focus) {
-      int ordinal = 0;
-      for (const auto& item : services.effectiveSegments()) {
-        if (item.kind == classtime::SegmentKind::Focus) ++ordinal;
-        if (item.id == segment.id) break;
-      }
-      tip = L"第 " + std::to_wstring(ordinal) + L" 节 · " + ToWide(segment.label);
+    if (vertical) {
+      visuals_[i].fill.Height(visuals_[i].length * progress);
+    } else {
+      visuals_[i].fill.Width(visuals_[i].length * progress);
     }
-    tip += L"\n" + FormatRange(segment) + L"（" + FormatMinutes(segment.DurationMinutes()) + L"）";
-    if (snapshot.current.has_value() && snapshot.current->id == segment.id) {
-      tip += L"\n已过 " +
-             std::to_wstring(std::max(
-                 0, (now.hour * 3600 + now.minute * 60 + now.second) / 60 -
-                        segment.start.TotalMinutes())) +
-             L" 分钟 · 剩余 " + RemainingText(segment, now);
-      tip += L"\n进度 " + FormatPercent(progress);
-    }
-    if (snapshot.next.has_value()) {
-      tip += L"\n下一段 " + FormatClock(snapshot.next->start) + L" " + ToWide(snapshot.next->label);
-    }
-    ToolTipService::SetToolTip(visuals_[i].host, box_value(tip));
   }
 }
 
 void OverlayWindow::RefreshRing() {
-  const auto& services = Services::Instance();
-  const auto& snapshot = services.snapshot();
-  const Palette palette = CurrentPalette();
-
-  const double progress = snapshot.current.has_value() ? snapshot.progress : 0.0;
-  ringPercent_.Text(FormatPercent(progress));
-
-  if (snapshot.current.has_value()) {
+  const auto now = NowClock();
+  const int nowMinutes = now.MinutesSinceMidnight();
+  const auto plan = Services::Instance().PlanFor(now);
+  const auto snapshot = classtime::Evaluate(plan.segments, now);
+  std::wstring label;
+  std::wstring time;
+  ringDetailId_.clear();
+  if (snapshot.current) {
     const auto& current = *snapshot.current;
-    ringLabel_.Text(current.kind == classtime::SegmentKind::Focus
-                        ? L"第 " + std::to_wstring(current.focusOrdinal) + L" 节"
-                        : SegmentKindLabel(current.kind));
+    label = current.kind == classtime::SegmentKind::Focus
+                ? L"第 " + std::to_wstring(current.focusOrdinal) + L" 节剩余"
+                : SegmentKindLabel(current.kind) + L"剩余";
+    const int remaining = (current.end.TotalMinutes() - nowMinutes) * 60 - now.second;
+    time = remaining < 3600 ? FormatElapsed(remaining)
+                            : std::to_wstring(remaining / 3600) + L":" +
+                                  FormatElapsed(remaining % 3600);
+    ringDetailId_ = current.id;
+  } else if (snapshot.next) {
+    const bool started = std::any_of(plan.segments.begin(), plan.segments.end(),
+                                     [nowMinutes](const auto& segment) {
+                                       return segment.start.TotalMinutes() <= nowMinutes;
+                                     });
+    label = started ? L"空档 · 下一段" : L"首段开始";
+    time = FormatClock(snapshot.next->start);
+    ringDetailId_ = snapshot.next->id;
   } else {
-    ringLabel_.Text(snapshot.hasSchedule ? L"今日已结束" : L"今天没有安排");
+    time = snapshot.hasSchedule ? L"今日已结束" : L"今天没有安排";
   }
+  ringLabel_.Text(label);
+  ringTime_.Text(time);
+  ringTime_.FontSize(label.empty() ? 18 : (time.size() > 5 ? 27 : 32));
+  Canvas::SetTop(ringTime_, label.empty() ? 66 : 58);
 
-  if (snapshot.next.has_value()) {
-    ringNext_.Text(L"接下来 " + FormatClock(snapshot.next->start) + L" · " +
-                   ToWide(snapshot.next->label));
-  } else {
-    ringNext_.Text(L"");
-  }
-
-  const auto accent = snapshot.current.has_value()
-                          ? KindColor(palette, snapshot.current->kind)
-                          : palette.accent;
-  ringArc_.Stroke(SolidColorBrush(accent));
-
-  // 圆环直径 196，半径 92，圆心（110,110）。
-  constexpr double kCenter = 110.0;
-  constexpr double kRadius = 92.0;
-  if (progress >= 0.999) {
-    EllipseGeometry geometry;
-    geometry.Center(Windows::Foundation::Point(static_cast<float>(kCenter),
-                                               static_cast<float>(kCenter)));
-    geometry.RadiusX(static_cast<float>(kRadius));
-    geometry.RadiusY(static_cast<float>(kRadius));
-    ringFull_.Data(geometry);
-    ringFull_.Stroke(SolidColorBrush(accent));
-    ringFull_.Visibility(Visibility::Visible);
-    ringArc_.Visibility(Visibility::Collapsed);
-  } else {
-    ringFull_.Visibility(Visibility::Collapsed);
-    ringArc_.Visibility(Visibility::Visible);
-    if (progress <= 0.0005) {
-      ringArc_.Data(PathGeometry());
-    } else {
-      const double sweep = progress * 2.0 * 3.14159265358979323846;
-      const double endX = kCenter + kRadius * std::sin(sweep);
-      const double endY = kCenter - kRadius * std::cos(sweep);
-
-      PathGeometry geometry;
-      PathFigure figure;
-      figure.StartPoint(Windows::Foundation::Point(static_cast<float>(kCenter),
-                                                   static_cast<float>(kCenter - kRadius)));
-      ArcSegment arc;
-      arc.Point(Windows::Foundation::Point(static_cast<float>(endX), static_cast<float>(endY)));
-      arc.Size(Windows::Foundation::Size(static_cast<float>(kRadius),
-                                         static_cast<float>(kRadius)));
-      arc.SweepDirection(SweepDirection::Clockwise);
-      arc.IsLargeArc(progress > 0.5);
-      figure.Segments().Append(arc);
-      geometry.Figures().Append(figure);
-      ringArc_.Data(geometry);
-    }
-  }
-
-  // 全天范围：用一排小圆点表示各节课的完成情况（不展开成多个主环）。
-  ringDots_.Children().Clear();
+  std::wstring summary;
   if (allDay_) {
-    const int nowSeconds = NowClock().hour * 3600 + NowClock().minute * 60 + NowClock().second;
-    for (const auto& segment : services.effectiveSegments()) {
+    int completed = 0;
+    int total = 0;
+    for (const auto& segment : plan.segments) {
       if (segment.kind != classtime::SegmentKind::Focus) continue;
-      Shapes::Ellipse dot;
-      dot.Width(6);
-      dot.Height(6);
-      const bool current =
-          snapshot.current.has_value() && snapshot.current->id == segment.id;
-      const bool done = segment.end.TotalMinutes() * 60 <= nowSeconds;
-      dot.Fill(SolidColorBrush(current ? accent
-                                       : (done ? WithAlpha(palette.foreground, 120)
-                                               : WithAlpha(palette.foreground, 45))));
-      ringDots_.Children().Append(dot);
+      ++total;
+      if (segment.end.TotalMinutes() <= nowMinutes) ++completed;
     }
+    if (total > 0) summary = L"今日 " + std::to_wstring(completed) + L" / " +
+                             std::to_wstring(total) + L" 节";
   }
+  ringSummary_.Text(summary);
 
-  ringRoot_.Visibility(Visibility::Visible);
-  barRoot_.Visibility(Visibility::Collapsed);
+  const bool showProgress = snapshot.current && snapshot.progress > 0;
+  if (showProgress) {
+    const double sweep = snapshot.progress * 2.0 * 3.14159265358979323846;
+    ringAccent_.Color(KindColor(CurrentPalette(), snapshot.current->kind));
+    ringSweep_.Point({static_cast<float>(kRingCenter + kRingRadius * std::sin(sweep)),
+                      static_cast<float>(kRingCenter - kRingRadius * std::cos(sweep))});
+    ringSweep_.IsLargeArc(snapshot.progress > 0.5);
+  }
+  ringArc_.Visibility(showProgress ? Visibility::Visible : Visibility::Collapsed);
+
+  if (detailAnchor_ == ringRoot_) {
+    if (ringDetailId_.empty()) HideDetail(true);
+    else detailSegmentId_ = ringDetailId_;
+  }
 }
 
 }  // namespace ClassTimeApp

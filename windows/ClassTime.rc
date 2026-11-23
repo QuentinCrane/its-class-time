@@ -15,12 +15,12 @@ BEGIN
     BEGIN
         BLOCK "080404b0"
         BEGIN
-            VALUE "CompanyName", "ClassTime"
-            VALUE "FileDescription", "ClassTime desktop schedule companion"
+            VALUE "CompanyName", "It's Class Time!"
+            VALUE "FileDescription", "It's Class Time! desktop schedule companion"
             VALUE "FileVersion", "0.1.0.0"
             VALUE "InternalName", "ClassTime"
-            VALUE "OriginalFilename", "ClassTime.exe"
-            VALUE "ProductName", "ClassTime"
+            VALUE "OriginalFilename", "ClassTimeApp.exe"
+            VALUE "ProductName", "It's Class Time!"
             VALUE "ProductVersion", "0.1.0.0"
         END
     END

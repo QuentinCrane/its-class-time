@@ -253,6 +253,8 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   config.presentation.view = classtime::PresentationSettings::View::Ring;
   config.presentation.scope = classtime::PresentationSettings::Scope::CurrentBlock;
   config.presentation.edge = classtime::PresentationSettings::Edge::Top;
+  config.presentation.autoHideAtEdge = true;
+  config.presentation.flushWithEdge = false;
   config.notifications.muted = true;
   config.revision = 7;
 
@@ -269,8 +271,34 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   Check(parsed->selectedTemplateId == "university", "配置保留选中模板");
   Check(parsed->presentation.view == classtime::PresentationSettings::View::Ring, "保留圆环视图");
   Check(parsed->presentation.edge == classtime::PresentationSettings::Edge::Top, "保留顶部贴边");
+  Check(parsed->presentation.autoHideAtEdge, "保留贴边自动隐藏");
+  Check(!parsed->presentation.flushWithEdge, "保留悬浮间距设置");
+
+  config.presentation.edge = classtime::PresentationSettings::Edge::Left;
+  const auto leftConfig = classtime::ParseConfig(classtime::SerializeConfig(config), &error);
+  Check(leftConfig && leftConfig->presentation.edge == classtime::PresentationSettings::Edge::Left,
+        "保留左侧贴边");
   Check(parsed->notifications.muted, "保留暂停状态");
   Check(parsed->revision == 7, "保留修订号");
+
+  config.presentation.view = classtime::PresentationSettings::View::ScreenEdge;
+  config.presentation.screenEdgeThickness = 17;
+  const auto edgeConfig = classtime::ParseConfig(classtime::SerializeConfig(config), &error);
+  Check(edgeConfig && edgeConfig->presentation.view == classtime::PresentationSettings::View::ScreenEdge,
+        "保留屏幕边框视图");
+  Check(edgeConfig && edgeConfig->presentation.screenEdgeThickness == 17, "保留屏幕边框粗细");
+  const auto withTemplate = "{\"templates\":[" + classtime::SerializeSchedule(highSchool, 0) +
+                            "],\"presentation\":";
+  const auto legacy = classtime::ParseConfig(withTemplate + R"({"view":"screen_edge"}})", &error);
+  Check(legacy && legacy->presentation.screenEdgeThickness == 10, "旧配置默认使用加粗边框");
+  Check(legacy && legacy->presentation.flushWithEdge, "旧配置默认紧贴边缘");
+  const auto oversized =
+      classtime::ParseConfig(withTemplate + R"({"screenEdgeThickness":100}})", &error);
+  Check(oversized && oversized->presentation.screenEdgeThickness == 24, "边框粗细限制在滑块范围内");
+  const auto unknownEdge =
+      classtime::ParseConfig(withTemplate + R"({"edge":"diagonal"}})", &error);
+  Check(unknownEdge && unknownEdge->presentation.edge == classtime::PresentationSettings::Edge::Bottom,
+        "未知贴边位置回退到底部");
 
   bool fromOverride = false;
   const auto effective = classtime::EffectiveSegments(*parsed, now, &fromOverride);

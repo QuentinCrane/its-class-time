@@ -1,6 +1,8 @@
 // 托盘图标：Shell_NotifyIcon + 原生菜单，关闭设置窗口后仍可恢复悬浮窗与退出。
 #pragma once
 
+#include "classtime/config.h"
+
 namespace ClassTimeApp {
 
 enum TrayCommand : UINT {
@@ -12,6 +14,7 @@ enum TrayCommand : UINT {
   kTrayToggleMute = 105,
   kTrayOpenSettings = 106,
   kTrayExit = 107,
+  kTrayScreenEdgeView = 108,
 };
 
 class TrayIcon {
@@ -22,7 +25,7 @@ class TrayIcon {
   void Destroy();
 
   // 更新菜单勾选状态与提示文字。
-  void Update(const std::wstring& tooltip, bool overlayVisible, bool ringView, bool allDayScope,
+  void Update(const std::wstring& tooltip, const classtime::PresentationSettings& presentation,
               bool muted);
 
   HWND window() const { return window_; }
@@ -41,9 +44,7 @@ class TrayIcon {
   UINT taskbarCreatedMessage_ = 0;
   bool added_ = false;
   std::wstring tooltip_ = L"“上课”时间到！";
-  bool overlayVisible_ = true;
-  bool ringView_ = false;
-  bool allDayScope_ = true;
+  classtime::PresentationSettings presentation_;
   bool muted_ = false;
 };
 

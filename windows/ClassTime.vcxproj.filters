@@ -91,6 +91,9 @@
     <ClInclude Include="app\tray_icon.h">
       <Filter>App</Filter>
     </ClInclude>
+    <ClInclude Include="app\ui_motion.h">
+      <Filter>App</Filter>
+    </ClInclude>
     <ClInclude Include="engine\include\classtime\config.h">
       <Filter>Engine</Filter>
     </ClInclude>

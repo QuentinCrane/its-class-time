@@ -16,7 +16,7 @@
 
   <Properties>
     <DisplayName>“上课”时间到！</DisplayName>
-    <PublisherDisplayName>ClassTime</PublisherDisplayName>
+    <PublisherDisplayName>It's Class Time!</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 

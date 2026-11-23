@@ -3,18 +3,19 @@
 > 目标平台：Windows 10 1809（17763）及以上，主目标 Windows 11。
 > 工程类型：C++/WinRT WinUI 3 桌面应用（MSIX 工程配置保留，同时支持解包运行）。
 
-## 1. 当前实现状态（2026-11-21 第二轮）
+## 1. 当前实现状态（2026-11-22）
 
 | 部分 | 状态 | 说明 |
 |---|---|---|
-| 作息引擎 `engine/` | **已编译并测试** | 纯 C++17，无 WinRT 依赖；`shared/test-cases/time-engine.json` 125 项检查全部通过 |
+| 作息引擎 `engine/` | **已编译并测试** | 纯 C++17，无 WinRT 依赖；`engine_tests` 134 项检查全部通过（含 `shared/test-cases` 与配置往返，0 失败） |
 | 配置/今日覆盖/去重 | **已编译并测试** | JSON 往返、原子写入、失效覆盖清理、事件键去重 |
-| 悬浮层 `app/overlay_window.*` | **源码通过 + 实机渲染验证** | 分节长条/圆环在解包模式实机渲染成功（截图核对） |
+| 悬浮层 `app/overlay_window.*` | **源码通过 + 实机渲染验证** | 分节长条/圆环/屏幕边框在解包模式实机渲染成功（截图核对）；四边吸附、左右竖向排列与状态配色为 2026-11-22 新增，待实机核对 |
 | 设置窗口 `app/settings_window.*` | **实机渲染验证** | 纯代码构建 UI；NavigationView、模板选择、星期勾选、时段列表、编辑浮层全部正常显示 |
 | 应用装配 `app/desktop_app.*` + `main.cpp` | **实机验证** | 解包模式启动稳定常驻；托盘图标出现；崩溃问题已修复（见 §2） |
 | 托盘 `app/tray_icon.*` | **实机验证** | 图标出现在系统托盘；explorer 重启重建逻辑未实测 |
 | 即时通知 `app/notification_service.*` | **源码通过，未实机验证** | `AppNotificationManager.Show` 需在实机核对授权与弹出 |
 | 边界等待 `app/boundary_monitor.*` | **源码通过，未实机验证** | 按最近边界睡眠 + 60 秒看门狗；睡眠唤醒场景待测 |
+| 离线安装包 `installer/` | **已构建并安装验证** | Inno Setup 7，含 Windows App Runtime 1.6.9；未签名，干净机待验 |
 | MSIX 打包 | **未验证** | 本机 MSBuild 被安全策略禁用；`tools/build-unpackaged.cmd` 提供无 MSBuild 构建路径 |
 
 ## 2. 本轮关键修复：IXamlMetadataProvider
@@ -55,7 +56,7 @@ tools\build-unpackaged.cmd
 脚本直接调用 `cl`/`link`/`rc`（vcvarsall 环境），产物为
 `build\app\ClassTimeApp.exe`（解包模式，经 Bootstrapper 初始化 Windows App
 Runtime 1.6）。`Microsoft.WindowsAppRuntime.Bootstrap.dll` 需在 exe 旁
-（脚本后手工复制或从 `packages\Microsoft.WindowsAppSDK.1.6.250602001\runtimes\win10-x64\native\` 获取）。
+（解包开发时可从 `packages\Microsoft.WindowsAppSDK.1.6.250602001\runtimes\win-x64\native\` 复制）。
 
 调试运行隔离数据目录：
 
@@ -65,6 +66,44 @@ $env:CLASSTIME_DATA_DIR = "<某个测试目录>"; $env:CLASSTIME_SHOW_SETTINGS =
 ```
 
 `tools\screenshot.cpp`（编译见脚本）提供全屏/按窗口标题截屏，用于 UI 验证。
+
+### Windows x64 安装 EXE
+
+还原本节的 NuGet 包并安装 Inno Setup 7 后，在仓库根目录运行：
+
+```powershell
+.\windows\tools\build-installer.ps1
+# 如编译器在自定义位置：
+.\windows\tools\build-installer.ps1 -Compiler 'C:\tools\Inno Setup 7\ISCC.exe'
+```
+
+脚本重新编译解包版，把应用、两份作息预设和 Microsoft Windows App Runtime 1.6.9
+打入 `windows\build\release\ItsClassTime-Setup-<版本>-x64.exe`。首次构建下载并校验
+运行时的 SHA-256，之后使用 `build\installer-tools\` 下的缓存。目标电脑可以离线安装。
+向导源码和浅色、深色插画在 `installer/`，构建已使用 Inno Setup 7.1.1。
+
+安装包构建与日常开发现在共用 `build\app\ClassTimeApp.exe` 这一份产物，不会再出现
+“安装包是新的、build 里的 exe 还是旧的”。构建前请先从托盘退出正在运行的 ClassTime；
+脚本检测到同名进程会直接提示，而不是抛一个链接器占用错误。
+
+双击安装包，选择安装路径及是否添加桌面快捷方式。默认安装到
+`%LOCALAPPDATA%\Programs\ClassTime`，适用于当前用户，并创建开始菜单快捷方式。
+覆盖安装会沿用原路径。应用运行时，从托盘点「退出」后即可继续安装或卸载。
+通过「设置 → 应用 → 已安装的应用」可以卸载。个人课表与设置保留在
+`%LOCALAPPDATA%\ClassTime`，共享的 Windows App Runtime 也会保留。
+
+向导文案会说明安装范围（当前用户、无需账号与联网、运行环境已内置），
+以及课表与设置单独保存、升级和卸载都不会删除。安装位置页在覆盖安装时也会显示，
+方便重新选择是否创建桌面快捷方式；运行环境安装失败时会给出可操作的重试提示。
+
+用户看到的名称统一为 **“上课”时间到！**（英文 **It's Class Time!**）：
+开始菜单、桌面快捷方式、设置窗口标题、通知与卸载条目都使用这个名称。
+`ClassTime` 仅作为工程与目录标识保留（`ClassTime.sln`、`ClassTimeApp.exe`、
+`%LOCALAPPDATA%\Programs\ClassTime`、配置目录），改名不影响这些路径。
+
+本机在 Windows 11 x64、125% 缩放下核对了中文向导、含中文和空格的路径、快捷方式、
+完成后启动、覆盖安装与卸载。当前构建未签名。最低系统门槛为 Windows 10 1809 x64，
+仍需在没有预装 Windows App Runtime 的系统验证完整的首次部署。
 
 ### MSIX / Visual Studio
 
@@ -121,7 +160,7 @@ windows\build\engine\engine_tests.exe "E:\path\to\repo"
 - **编辑策略**：`engine/src/edit_ops.cpp` 的 `Shift`/`Keep`，冲突返回 `conflictIds`，UI 不静默移动时段。
 - **通知**：`BoundaryMonitor` 只按最近边界唤醒；到点后以真实时钟复核，30 秒容差外跳过；`NotificationService` 合并同一秒事件。
 - **暂停**：只置 `notifications.muted`，进度与边界判断继续。
-- **悬浮窗**：`OverlappedPresenter` 去边框、`SetWindowPos(HWND_TOPMOST)`、`WS_EX_NOACTIVATE`；不承诺覆盖独占全屏。
+- **悬浮窗**：`OverlappedPresenter` 去边框、`SetWindowPos(HWND_TOPMOST)`、`WS_EX_NOACTIVATE`；四边吸附，左右贴边切换为竖向分节。默认 `flushWithEdge=true`，贴边时 0 间距、靠边圆角削平并关闭 DWM 外框，可直接落在任务栏上沿；关闭后恢复 12 DIP 悬浮间距。不承诺覆盖独占全屏。
 - **单实例**：`AppInstance::FindOrRegisterForKey("ClassTime")`。
 - **开机启动**：清单中的 `ClassTimeStartup` 启动任务，默认关闭，由用户在设置页开启。
 
@@ -140,6 +179,7 @@ windows\build\engine\engine_tests.exe "E:\path\to\repo"
 
 ## 8. 已知限制 / 后续
 
+- 四边吸附与左右竖向排列已接入，需要在 125%/150% 缩放下实机核对贴边位置、悬停卡方向与自动隐藏动画。
 - 悬浮窗贴边定位：config 可保存 `edge/offset`，实机核对贴底 offsetY 行为与拖动吸附细节（本轮未逐一交互验证）。
 - hover 详情、多显示器热插拔监听、通知实弹均待实机确认。
 - MSIX 打包、签名、CI 依赖可运行 MSBuild 的环境。

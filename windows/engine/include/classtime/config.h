@@ -12,17 +12,24 @@
 namespace classtime {
 
 struct PresentationSettings {
-  enum class View { Bar, Ring };
+  enum class View { Bar, Ring, ScreenEdge };
   enum class Scope { AllDay, CurrentBlock };
-  enum class Edge { Top, Bottom };
+  enum class Edge { Top, Bottom, Left, Right };
 
+  static constexpr int kMinScreenEdgeThickness = 4;
+  static constexpr int kMaxScreenEdgeThickness = 24;
+  static constexpr int kDefaultScreenEdgeThickness = 10;
   View view = View::Bar;
   Scope scope = Scope::AllDay;
   Edge edge = Edge::Bottom;
   bool visible = true;
+  bool autoHideAtEdge = false;
+  // 贴边时是否与任务栏/屏幕边缘无缝衔接（0 间距），否则保留悬浮间距。
+  bool flushWithEdge = true;
+  int screenEdgeThickness = kDefaultScreenEdgeThickness;  // DIP
   std::string monitorId;  // 显示器设备名；空表示主屏
-  int offsetX = 0;        // 相对工作区左侧像素
-  int offsetY = 12;       // 距离贴边像素
+  int offsetX = 0;        // 相对工作区水平居中位置的 DIP 偏移
+  int offsetY = 12;       // 距离工作区边缘的 DIP
 };
 
 struct NotificationSettings {

@@ -1,27 +1,56 @@
 # DEVELOPMENT｜本地开发与 GitHub 维护指南
 
+> **这份文档回答**：拿到仓库后怎么在本机跑起来、按什么顺序推进、发布前哪些步骤不能省。Windows 端已经有可运行的工程，macOS 端仍待创建；下面的步骤按“当前实际状态”标注。
+
 ## 1. 本地开发环境
 
 | 平台 | 建议开发机 | 必备软件 | 验证目标 |
 |---|---|---|---|
 | macOS | Apple Silicon Mac | Xcode / macOS SDK / Swift | SwiftUI 配置窗口 + AppKit 悬浮条、菜单栏和通知 |
-| Windows 11 | x64 Windows 电脑 | Visual Studio 2026 + C++ 桌面工具 + Windows SDK + Windows App SDK / WinUI C++ 模板 | C++/WinRT WinUI3 设置窗口 + Win32 悬浮/托盘 + 通知 |
+| Windows 11 | x64 Windows 电脑 | Visual Studio 2022 17.8+（含“使用 C++ 的桌面开发”与 C++ WinUI 工具）、Windows SDK 10.0.22621+、Windows App SDK | C++/WinRT WinUI3 设置窗口 + Win32 悬浮/托盘 + 通知 |
 
 **具体 SDK 版本安装前核对官方链接**，不要把曾经某一日的最新版写死在生成工程里（见 `REFERENCES.md`）。先用当前官方模板生成真实工程并验证编译。
+
+### Windows 最短上手路径
+
+```cmd
+cd windows
+:: 直接 cl/link，产物 build\app\ClassTimeApp.exe
+tools\build-unpackaged.cmd
+```
+
+不依赖 MSBuild，也不依赖 XAML 编译器；适用于被组策略限制的开发机。需要验证安装包时：
+
+```powershell
+# 需要 Inno Setup 7，产物 build\release\ItsClassTime-Setup-<版本>-x64.exe
+.\windows\tools\build-installer.ps1
+```
+
+引擎可以脱离 UI 单独验证：
+
+```powershell
+cmake -S windows -B windows/build/engine -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build windows/build/engine
+windows\build\engine\engine_tests.exe "<仓库绝对路径>"
+```
+
+详细依赖版本、实机验证边界与已知限制见 [windows/README.md](../windows/README.md)。
 
 ## 2. 建仓方式（Monorepo）
 
 ```text
-ClassTime/
-├── macos/                   # Xcode 真实工程（待生成）
-├── windows/                 # VS C++/WinRT 真实工程（待生成）
+It'sClassTime/
+├── macos/                   # Xcode 真实工程（占位，待生成）
+├── windows/                 # VS C++/WinRT 真实工程（已生成，可构建运行）
 ├── shared/
 │   ├── schemas/
 │   ├── presets/
 │   └── test-cases/
-├── assets/prototype/
+├── assets/
+│   ├── prototype/
+│   └── screenshots/
 ├── docs/
-├── .github/workflows/       # 先完成手动构建，再加入真实 CI
+├── .github/workflows/       # 尚未添加工作流，先保证本机可构建
 ├── AGENTS.md
 └── README.md
 ```
@@ -34,10 +63,10 @@ ClassTime/
 
 ### Step 0：创建项目
 
-1. Windows：新建**C++ WinUI 3 Desktop** 项目（不要误选 C#），先编译空窗口。
+1. Windows：**已有** `windows/ClassTime.sln`（C++ WinUI 3 Desktop）。若要重建，注意选 C++ 而不是 C#，并保留现有的纯代码 UI 装配方式。
 2. macOS：新建 SwiftUI macOS App，先编译空窗口。
-3. 将本开发包中的 docs、shared、assets、AGENTS、README 放进仓库根目录；不要把 `.xcodeproj`、`.slnx` 的路径写进文档然后假装项目已存在。
-4. 用各自 IDE 将平台工程目录加入 Git。
+3. 仓库内的 docs、shared、assets、AGENTS、README 是跨端契约；新建工程时不要复制出第二份。
+4. 用各自 IDE 将平台工程目录加入 Git，构建产物由 `.gitignore` 排除。
 
 ### Step 1：验证最危险的原生能力
 
@@ -65,24 +94,31 @@ ClassTime/
 
 ### Step 5：CI / Release
 
-- GitHub Actions 用 `macos-*` runner 构建 Xcode 工程，`windows-*` runner 构建 Visual Studio C++ 工程。
-- 先构建、测试、上传 CI artifacts；无签名时**不标成正式可安装发行包**。
-- 通过本地安装测试后，再配置 Apple Developer ID + notarization，Windows MSIX 签名/信任链，并统一到单个 GitHub Release。
+- **当前尚未接入 CI。** 先在两端完成本机构建与安装验证，再写“确实能跑通”的工作流，而不是先提交一份没人跑过的 YAML。
+- 计划：`macos-*` runner 构建 Xcode 工程，`windows-*` runner 构建 C++ 工程并跑引擎测试；先上传 artifacts。
+- 无签名的产物**不标成正式可安装发行包**。Windows 安装包目前就是未签名状态，需明确告知 SmartScreen 风险。
+- 通过本地安装测试后，再配置 Apple Developer ID + notarization、Windows 代码签名/信任链，并统一到单个 GitHub Release。
 - 版本号与 changelog 统一维护；mac 和 windows 可各自标注“本次改动”。
 
 ## 4. Git 使用建议
 
+仓库已经初始化，日常按短分支推进即可：
+
 ```bash
-# 本地初始化（在复制好文档的目录中执行）
-git init
-git add README.md AGENTS.md docs shared assets
-git commit -m "docs: freeze ClassTime native desktop v1 requirements"
+git switch -c feat/windows-hover-fix
+git add windows docs
+git commit -m "feat(windows): refine hover card placement"
+git push -u origin feat/windows-hover-fix
 ```
 
-随后分别用 Xcode 和 Visual Studio 创建工程后继续提交。无需 monorepo 管理框架、Git submodule、Git LFS（当前原型图片很小）、NPM/Node 构建链。
+- 一个分支只做一件事，合并前保持 `main` 可构建。
+- 提交信息建议带范围前缀：`feat(windows):`、`fix(engine):`、`docs:`、`chore:`。
+- 不需要 monorepo 管理框架、Git submodule、Git LFS 或 NPM/Node 构建链。
+- Windows 构建产物（`windows/build`、`windows/packages`）已在 `.gitignore` 中，不要提交编译器生成的中间文件。
 
 ## 5. 发行重要说明
 
-- GitHub Actions 可自动化**构建**，但 macOS 公证与 Windows MSIX 签名是另外的步骤，需要开发者身份、证书/权限等前提。
+- GitHub Actions 可自动化**构建**，但 macOS 公证与 Windows 代码签名是另外的步骤，需要开发者身份、证书/权限等前提。
 - 试验版本可先作为本地调试程序运行。别在还没解决签名时写“零提示安装”一类不真实承诺。
-- 当前资料包**未声称完成双端构建**；有架构、配置示例和测试数据，无 `.app`、`.exe` 成品。
+- 当前状态：**Windows 有可运行源码与未签名安装包**；macOS 尚无工程，也没有 `.app` 成品。双端 Release 尚未发布。
+- Windows 的通知注册与开机启动属于打包相关能力，解包模式下只能验证界面与引擎；相关结论要注明是在哪种形态下测得的。
