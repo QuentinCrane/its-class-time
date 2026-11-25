@@ -11,8 +11,10 @@
 #include <limits>
 
 #include <winrt/Microsoft.UI.Interop.h>
+#include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
+#include <winrt/Windows.UI.ViewManagement.h>
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -95,6 +97,20 @@ Brush ResourceBrush(const wchar_t* key, Windows::UI::Color fallback) {
 
 Windows::UI::Color SecondaryColor() {
   return Windows::UI::ColorHelper::FromArgb(255, 110, 112, 120);
+}
+
+// 开启“自定义背景色”时，取当前系统背景色作为取色器起点。
+Windows::UI::Color SystemBackgroundColor() {
+  try {
+    Windows::UI::ViewManagement::UISettings settings;
+    return settings.GetColorValue(Windows::UI::ViewManagement::UIColorType::Background);
+  } catch (...) {
+    return Windows::UI::ColorHelper::FromArgb(255, 250, 250, 252);
+  }
+}
+
+int SnapToTimelineStep(int minute, int step) {
+  return static_cast<int>(std::llround(minute / static_cast<double>(step))) * step;
 }
 
 Windows::UI::Color SegmentColor(classtime::SegmentKind kind) {
@@ -375,6 +391,9 @@ SettingsWindow::SettingsWindow() { Build(); }
 
 SettingsWindow::~SettingsWindow() {
   CommitScreenEdgeThickness();
+  CommitBarLength();
+  CommitBarBackground();
+  CommitTemplateName();
   Motion::Stop(editorMotion_);
   Motion::Stop(sectionMotion_);
   Motion::Stop(previewMotion_);
@@ -432,6 +451,9 @@ void SettingsWindow::Build() {
   appWindow.Closing([this](auto const&, Microsoft::UI::Windowing::AppWindowClosingEventArgs const& args) {
     if (allowClose_) return;
     CommitScreenEdgeThickness();
+    CommitBarLength();
+    CommitBarBackground();
+    CommitTemplateName();
     args.Cancel(true);
     if (hwnd_ != nullptr) ShowWindow(hwnd_, SW_HIDE);
   });
@@ -555,6 +577,13 @@ void SettingsWindow::Build() {
     templateStatus_ = MakeSubtitle(L"");
     Add(stack, templateStatus_);
 
+    templateNameBox_ = TextBox();
+    templateNameBox_.Header(box_value(hstring(L"模板名称")));
+    templateNameBox_.PlaceholderText(L"例如：我的高中课表");
+    Automation::AutomationProperties::SetName(templateNameBox_, L"模板名称");
+    Add(stack, templateNameBox_);
+    Add(stack, MakeSubtitle(L"直接输入即可重命名当前模板；输入停顿后自动保存。"));
+
     Add(stack, MakeText(L"生效星期", 14));
     weekdayPanel_ = VariableSizedWrapGrid();
     weekdayPanel_.Orientation(Orientation::Horizontal);
@@ -602,6 +631,67 @@ void SettingsWindow::Build() {
     Add(buttons, clearTodayButton_);
     BindActionRow(buttons, 350);
     Add(stack, buttons);
+
+    // —— 作息时间轴：类剪辑软件的水平刻度条，拖动直接改时间与时长 ——
+    Add(stack, MakeCardTitle(L"时间轴"));
+    Add(stack, MakeSubtitle(L"拖动时段块整体移动；拖动两侧的竖条调整开始和结束时间，步进从原时间计算。"
+                            L"双击时段打开编辑，双击空白处在该时刻新增。"));
+    auto zoomRow = Grid();
+    zoomRow.Children().Append(MakeText(L"缩放", 14));
+    timelineZoomSlider_ = Slider();
+    timelineZoomSlider_.Minimum(40);
+    timelineZoomSlider_.Maximum(200);
+    timelineZoomSlider_.StepFrequency(10);
+    timelineZoomSlider_.Value(timelinePxPerHour_);
+    timelineZoomSlider_.VerticalAlignment(VerticalAlignment::Bottom);
+    Automation::AutomationProperties::SetName(timelineZoomSlider_, L"时间轴缩放");
+    Grid::SetColumn(timelineZoomSlider_, 1);
+    auto zoomColumn = ColumnDefinition();
+    zoomColumn.Width(GridLengthHelper::FromValueAndType(160, GridUnitType::Pixel));
+    auto zoomSpace = ColumnDefinition();
+    zoomSpace.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+    zoomRow.ColumnDefinitions().Append(zoomSpace);
+    zoomRow.ColumnDefinitions().Append(zoomColumn);
+    zoomRow.ColumnSpacing(12);
+    zoomRow.Children().Append(timelineZoomSlider_);
+    Add(stack, zoomRow);
+
+    auto snapRow = StackPanel();
+    snapRow.Orientation(Orientation::Horizontal);
+    snapRow.Spacing(12);
+    auto snapLabel = MakeText(L"拖动步进", 14);
+    snapLabel.VerticalAlignment(VerticalAlignment::Center);
+    Add(snapRow, snapLabel);
+    timelineSnapCombo_ = ComboBox();
+    timelineSnapCombo_.Items().Append(box_value(L"1 分钟"));
+    timelineSnapCombo_.Items().Append(box_value(L"5 分钟"));
+    timelineSnapCombo_.Items().Append(box_value(L"15 分钟"));
+    Automation::AutomationProperties::SetName(timelineSnapCombo_, L"时间轴拖动步进");
+    Add(snapRow, timelineSnapCombo_);
+    Add(stack, snapRow);
+
+    timelineScroll_ = ScrollViewer();
+    timelineScroll_.HorizontalScrollMode(ScrollMode::Enabled);
+    timelineScroll_.HorizontalScrollBarVisibility(ScrollBarVisibility::Auto);
+    timelineScroll_.VerticalScrollMode(ScrollMode::Disabled);
+    timelineScroll_.VerticalScrollBarVisibility(ScrollBarVisibility::Disabled);
+    timelineScroll_.BorderBrush(ResourceBrush(L"CardStrokeColorDefaultBrush",
+                                             Windows::UI::ColorHelper::FromArgb(40, 0, 0, 0)));
+    timelineScroll_.BorderThickness(Thickness{1, 1, 1, 1});
+    timelineScroll_.CornerRadius(CornerRadius{6, 6, 6, 6});
+    Automation::AutomationProperties::SetName(timelineScroll_, L"作息时间轴");
+    timelineCanvas_ = Canvas();
+    timelineCanvas_.Height(100);
+    // 透明背景让空白区域也参与命中测试，双击空白新增才可用。
+    timelineCanvas_.Background(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)));
+    timelineScroll_.Content(timelineCanvas_);
+    timelineScroll_.Loaded([this](auto const&, auto const&) {
+      window_.DispatcherQueue().TryEnqueue([this] { PositionTimelineInitially(); });
+    });
+    timelineScroll_.SizeChanged([this](auto const&, auto const&) { PositionTimelineInitially(); });
+    Add(stack, timelineScroll_);
+    timelineStatusText_ = MakeSubtitle(L"");
+    Add(stack, timelineStatusText_);
     Add(stack, timetableScroll_);
     Add(stack, MakeCardTitle(L"时段列表"));
     Add(stack, segmentList_);
@@ -713,6 +803,49 @@ void SettingsWindow::Build() {
     Add(dockRow, reanchorButton_);
     Add(dockControls_, dockRow);
     Add(dockControls_, MakeSubtitle(L"紧贴边缘时与任务栏或屏幕边缘无缝衔接；关闭则保留悬浮间距。"));
+
+    // 长条长度：分节长条沿贴边方向的整体长度；仅长条视图可见。
+    barLengthPanel_ = StackPanel();
+    barLengthPanel_.Spacing(4);
+    auto lengthRow = Grid();
+    lengthRow.Children().Append(MakeText(L"长条长度", 14));
+    barLengthValue_ = MakeSubtitle(L"");
+    barLengthValue_.HorizontalAlignment(HorizontalAlignment::Right);
+    lengthRow.Children().Append(barLengthValue_);
+    Add(barLengthPanel_, lengthRow);
+    barLengthSlider_ = Slider();
+    barLengthSlider_.Minimum(Presentation::kMinBarLength);
+    barLengthSlider_.Maximum(Presentation::kMaxBarLength);
+    barLengthSlider_.StepFrequency(10);
+    Automation::AutomationProperties::SetName(barLengthSlider_, L"长条长度");
+    Add(barLengthPanel_, barLengthSlider_);
+    Add(barLengthPanel_, MakeSubtitle(
+        L"整根条的长度；左右贴边时为竖向长度，超出屏幕高度会自动收缩。"));
+    auto resetBarLength = Button();
+    resetBarLength.Content(box_value(hstring(L"恢复默认长度")));
+    resetBarLength.Click([this](auto const&, auto const&) {
+      if (barLengthTimer_) barLengthTimer_.Stop();
+      pendingBarLength_.reset();
+      auto presentation = Services::Instance().config().presentation;
+      presentation.barLengthDip = Presentation::kDefaultBarLength;
+      Services::Instance().UpdatePresentation(presentation);
+    });
+    Add(barLengthPanel_, resetBarLength);
+    Add(dockControls_, barLengthPanel_);
+
+    barColorPanel_ = StackPanel();
+    barColorPanel_.Spacing(4);
+    barBackgroundToggle_ = ToggleSwitch();
+    barBackgroundToggle_.Header(box_value(hstring(L"自定义背景色")));
+    Add(barColorPanel_, barBackgroundToggle_);
+    Add(barColorPanel_, MakeSubtitle(L"关闭后恢复跟随系统的深浅色背景。"));
+    barColorPicker_ = ColorPicker();
+    barColorPicker_.IsAlphaEnabled(false);
+    barColorPicker_.IsMoreButtonVisible(false);
+    barColorPicker_.Visibility(Visibility::Collapsed);
+    Automation::AutomationProperties::SetName(barColorPicker_, L"长条背景颜色");
+    Add(barColorPanel_, barColorPicker_);
+    Add(dockControls_, barColorPanel_);
 
     // 两种形式各自需要的贴边选项放在同一个宿主里：切换时宿主高度做补间，
     // 下面的开关就不会被瞬间顶开或吸上。
@@ -1144,6 +1277,7 @@ void SettingsWindow::Build() {
     const auto& config = Services::Instance().config();
     if (index < 0 || index >= static_cast<int>(config.templates.size())) return;
     const std::string templateId = config.templates[index].id;
+    CommitTemplateName();
     std::string error;
     if (!Services::Instance().SelectTemplate(templateId, &error)) return;
     RefreshAll();
@@ -1197,6 +1331,168 @@ void SettingsWindow::Build() {
     auto presentation = Services::Instance().config().presentation;
     presentation.flushWithEdge = flushToggle_.IsOn();
     Services::Instance().UpdatePresentation(presentation);
+  });
+  barLengthSlider_.ValueChanged([this](auto const&, auto const& args) {
+    if (syncing_) return;
+    pendingBarLength_ = static_cast<int>(std::lround(args.NewValue()));
+    barLengthValue_.Text(std::to_wstring(*pendingBarLength_));
+    RefreshDisplayPreview(Services::Instance().config().presentation);
+    // 拖动期间预览即时更新，停顿后合并保存与浮窗尺寸调整。
+    if (!barLengthTimer_) {
+      barLengthTimer_ = window_.DispatcherQueue().CreateTimer();
+      barLengthTimer_.IsRepeating(false);
+      barLengthTimer_.Interval(std::chrono::milliseconds(150));
+      barLengthTimer_.Tick([this](auto const&, auto const&) { CommitBarLength(); });
+    }
+    barLengthTimer_.Stop();
+    barLengthTimer_.Start();
+  });
+  barBackgroundToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
+                                                       [this](auto const&, auto const&) {
+    if (syncing_) return;
+    if (barColorTimer_) barColorTimer_.Stop();
+    pendingBarBackground_.reset();
+    auto presentation = Services::Instance().config().presentation;
+    if (barBackgroundToggle_.IsOn()) {
+      barColorPicker_.Visibility(Visibility::Visible);
+      // 以当前系统背景为起点，避免开启取色器后颜色跳变。
+      if (presentation.barBackground.empty()) {
+        const auto color = SystemBackgroundColor();
+        const bool wasSyncing = std::exchange(syncing_, true);
+        barColorPicker_.Color(color);
+        syncing_ = wasSyncing;
+        presentation.barBackground = WidgetAppearance::ColorToHex(color);
+        Services::Instance().UpdatePresentation(presentation);
+      }
+      return;
+    }
+    barColorPicker_.Visibility(Visibility::Collapsed);
+    if (presentation.barBackground.empty()) return;
+    presentation.barBackground.clear();
+    Services::Instance().UpdatePresentation(presentation);
+  });
+  barColorPicker_.ColorChanged([this](auto const&, auto const& args) {
+    if (syncing_) return;
+    pendingBarBackground_ = WidgetAppearance::ColorToHex(args.NewColor());
+    RefreshDisplayPreview(Services::Instance().config().presentation);
+    if (!barColorTimer_) {
+      barColorTimer_ = window_.DispatcherQueue().CreateTimer();
+      barColorTimer_.IsRepeating(false);
+      barColorTimer_.Interval(std::chrono::milliseconds(200));
+      barColorTimer_.Tick([this](auto const&, auto const&) { CommitBarBackground(); });
+    }
+    barColorTimer_.Stop();
+    barColorTimer_.Start();
+  });
+  templateNameBox_.TextChanged([this](auto const&, auto const&) {
+    if (syncing_) return;
+    const std::wstring name = TextOf(templateNameBox_);
+    if (templateNameTimer_) templateNameTimer_.Stop();
+    if (name == templateRenameBase_) {
+      pendingTemplateId_.clear();
+      pendingTemplateName_.clear();
+      return;
+    }
+    pendingTemplateId_ = Services::Instance().config().selectedTemplateId;
+    pendingTemplateName_ = name;
+    if (name.empty()) return;
+    if (!templateNameTimer_) {
+      templateNameTimer_ = window_.DispatcherQueue().CreateTimer();
+      templateNameTimer_.IsRepeating(false);
+      templateNameTimer_.Interval(std::chrono::milliseconds(600));
+      templateNameTimer_.Tick([this](auto const&, auto const&) { CommitTemplateName(); });
+    }
+    templateNameTimer_.Start();
+  });
+  timelineZoomSlider_.ValueChanged([this](auto const&, auto const& args) {
+    if (syncing_) return;
+    timelinePxPerHour_ = std::max(20.0, args.NewValue());
+    // 拖动进行中不重建，避免拆掉正在操作的可视树。
+    if (timelineDragMode_ != TimelineDragMode::None) return;
+    const bool permanent = planScope_.SelectedIndex() != 1;
+    RebuildTimelineBlocks(classtime::SortedByStart(EditorBaseSegments(permanent)));
+  });
+  timelineSnapCombo_.SelectionChanged([this](auto const&, auto const&) {
+    if (syncing_) return;
+    const int index = timelineSnapCombo_.SelectedIndex();
+    if (index < 0 || index > 2) return;
+    auto presentation = Services::Instance().config().presentation;
+    presentation.timelineSnapMinutes = index == 0 ? 1 : index == 2 ? 15 : 5;
+    Services::Instance().UpdatePresentation(presentation);
+  });
+  // 时间轴拖动：指针事件统一挂在画布上，块只负责发起。
+  timelineCanvas_.PointerMoved([this](auto const&, Input::PointerRoutedEventArgs const& args) {
+    if (timelineDragMode_ == TimelineDragMode::None || !timelineDragPointer_ ||
+        args.Pointer().PointerId() != *timelineDragPointer_) return;
+    const int minuteAtPointer =
+        TimelineMinute(args.GetCurrentPoint(timelineCanvas_).Position().X);
+    const int step = Services::Instance().config().presentation.timelineSnapMinutes;
+    const auto range = DraggedTimelineRange({timelineDragStart_, timelineDragEnd_},
+                                             timelineDragMode_,
+                                             minuteAtPointer - timelineDragAnchorMinute_, step);
+    const int newStart = range.start;
+    const int newEnd = range.end;
+    timelineDragCurrentStart_ = newStart;
+    timelineDragCurrentEnd_ = newEnd;
+
+    auto block = std::find_if(timelineBlocks_.begin(), timelineBlocks_.end(),
+                              [this](const TimelineBlock& item) {
+                                return item.id == timelineDragId_;
+                              });
+    if (block == timelineBlocks_.end()) return;
+    const double pxPerMinute = timelinePxPerHour_ / 60.0;
+    Canvas::SetLeft(block->host, TimelineX(newStart));
+    block->host.Width(std::max(4.0, (newEnd - newStart) * pxPerMinute));
+    block->startMinute = newStart;
+    block->endMinute = newEnd;
+    const classtime::TimeOfDay rangeStart = *classtime::TimeOfDay::FromTotalMinutes(newStart);
+    const classtime::TimeOfDay rangeEnd = *classtime::TimeOfDay::FromTotalMinutes(newEnd);
+    block->sub.Text(hstring(FormatClock(rangeStart) + L"–" + FormatClock(rangeEnd)));
+    // 与其他时段重叠时给出即时反馈，松手仍按规则拦截。
+    const auto segments = EditorBaseSegments(planScope_.SelectedIndex() != 1);
+    const auto dragged = std::find_if(segments.begin(), segments.end(),
+                                      [this](const classtime::Segment& other) {
+                                        return other.id == timelineDragId_;
+                                      });
+    const auto kindColor = SegmentColor(
+        dragged != segments.end() ? dragged->kind : classtime::SegmentKind::Focus);
+    const bool overlap = std::any_of(segments.begin(), segments.end(),
+                                     [this, newStart, newEnd](const classtime::Segment& other) {
+                                       return other.id != timelineDragId_ &&
+                                              newStart < other.end.TotalMinutes() &&
+                                              other.start.TotalMinutes() < newEnd;
+                                     });
+    block->host.BorderBrush(SolidColorBrush(
+        overlap ? Windows::UI::ColorHelper::FromArgb(255, 188, 53, 66) : kindColor));
+    timelineStatusText_.Text(hstring(
+        (overlap ? std::wstring(L"⚠ 与其他时段重叠，松手将恢复原时间。")
+                 : L"正在调整（步进 " + std::to_wstring(step) + L" 分钟）：") +
+        FormatClock(rangeStart) + L"–" + FormatClock(rangeEnd)));
+    args.Handled(true);
+  });
+  timelineCanvas_.PointerReleased([this](auto const&, Input::PointerRoutedEventArgs const& args) {
+    if (!timelineDragPointer_ || args.Pointer().PointerId() != *timelineDragPointer_) return;
+    FinishTimelineDrag(true);
+    args.Handled(true);
+  });
+  const auto cancelTimelineDrag = [this](auto const&, Input::PointerRoutedEventArgs const& args) {
+    if (timelineDragPointer_ && args.Pointer().PointerId() == *timelineDragPointer_) {
+      FinishTimelineDrag(false);
+    }
+  };
+  timelineCanvas_.PointerCaptureLost(cancelTimelineDrag);
+  timelineCanvas_.PointerCanceled(cancelTimelineDrag);
+  timelineCanvas_.DoubleTapped([this](auto const&, Input::DoubleTappedRoutedEventArgs const& args) {
+    if (timelineDragMode_ != TimelineDragMode::None) return;
+    const double x = args.GetPosition(timelineCanvas_).X;
+    const int step = Services::Instance().config().presentation.timelineSnapMinutes;
+    const int minute = std::max(0, SnapToTimelineStep(TimelineMinute(x), step));
+    if (minute >= 1439) {
+      ShowScheduleNotice(L"所选时间太晚，请选择 23:58 或更早的时间新增时段。", true);
+      return;
+    }
+    OpenNewEditorAt(minute);
+    args.Handled(true);
   });
   notificationsToggle_.Toggled([this](auto const&, auto const&) {
     if (syncing_) return;
@@ -1410,18 +1706,40 @@ void SettingsWindow::RefreshAll() {
 
 void SettingsWindow::RefreshTemplates() {
   const auto& config = Services::Instance().config();
-  templateCombo_.Items().Clear();
   int selected = 0;
   int index = 0;
   for (const auto& schedule : config.templates) {
-    ComboBoxItem item;
-    item.Content(box_value(hstring(ToWide(schedule.name))));
-    item.Tag(box_value(hstring(ToWide(schedule.id))));
-    templateCombo_.Items().Append(item);
     if (schedule.id == config.selectedTemplateId) selected = index;
     ++index;
   }
-  templateCombo_.SelectedIndex(selected);
+  // 选择事件尚未结束时不要拆除下拉项；名称变更仅更新已有项目。
+  if (!templateCombo_.IsDropDownOpen()) {
+    if (templateCombo_.Items().Size() != config.templates.size()) {
+      templateCombo_.Items().Clear();
+      for (const auto& schedule : config.templates) {
+        ComboBoxItem item;
+        item.Content(box_value(hstring(ToWide(schedule.name))));
+        item.Tag(box_value(hstring(ToWide(schedule.id))));
+        templateCombo_.Items().Append(item);
+      }
+    } else {
+      for (uint32_t i = 0; i < config.templates.size(); ++i) {
+        auto item = templateCombo_.Items().GetAt(i).as<ComboBoxItem>();
+        item.Content(box_value(hstring(ToWide(config.templates[i].name))));
+        item.Tag(box_value(hstring(ToWide(config.templates[i].id))));
+      }
+    }
+    templateCombo_.SelectedIndex(config.templates.empty() ? -1 : selected);
+  }
+
+  // 模板重命名输入框与当前模板名称保持一致。
+  if (const auto* schedule = classtime::SelectedTemplate(config)) {
+    templateRenameBase_ = ToWide(schedule->name);
+    if (templateNameBox_ && pendingTemplateId_ != schedule->id &&
+        TextOf(templateNameBox_) != templateRenameBase_) {
+      templateNameBox_.Text(hstring(templateRenameBase_));
+    }
+  }
 
   const auto now = NowClock();
   if (Services::Instance().usingTodayOverride()) {
@@ -1449,9 +1767,14 @@ void SettingsWindow::RefreshWeekdays() {
 
 void SettingsWindow::RefreshSegments() {
   const bool permanent = planScope_.SelectedIndex() != 1;
+  const bool wasSyncing = std::exchange(syncing_, true);
+  const int snap = Services::Instance().config().presentation.timelineSnapMinutes;
+  timelineSnapCombo_.SelectedIndex(snap == 1 ? 0 : snap == 15 ? 2 : 1);
+  syncing_ = wasSyncing;
   segmentList_.Children().Clear();
   auto sorted = classtime::SortedByStart(EditorBaseSegments(permanent));
   RefreshTimetable(sorted, permanent);
+  RefreshTimeline(sorted);
   RefreshTodayOverview();
   // “撤销今日调整”只在确有临时调整时可用，并说明原因。
   const bool hasOverride = Services::Instance().usingTodayOverride();
@@ -1518,13 +1841,24 @@ void SettingsWindow::RefreshSegments() {
     Grid::SetColumn(text, 1);
     grid.Children().Append(text);
 
+    auto actions = StackPanel();
+    actions.Orientation(Orientation::Horizontal);
+    actions.Spacing(8);
     auto edit = Button();
     edit.Content(box_value(hstring(L"编辑")));
     edit.VerticalAlignment(VerticalAlignment::Center);
     Automation::AutomationProperties::SetName(edit, hstring(L"编辑 " + ToWide(segment.label)));
     edit.Click([this, segment](auto const&, auto const&) { OpenEditor(segment); });
-    Grid::SetColumn(edit, 2);
-    grid.Children().Append(edit);
+    actions.Children().Append(edit);
+    auto duplicate = Button();
+    duplicate.Content(box_value(hstring(L"复制")));
+    duplicate.VerticalAlignment(VerticalAlignment::Center);
+    Automation::AutomationProperties::SetName(duplicate,
+                                             hstring(L"复制 " + ToWide(segment.label)));
+    duplicate.Click([this, segment](auto const&, auto const&) { OpenDuplicateEditor(segment); });
+    actions.Children().Append(duplicate);
+    Grid::SetColumn(actions, 2);
+    grid.Children().Append(actions);
 
     row.Child(grid);
     segmentList_.Children().Append(row);
@@ -1639,6 +1973,274 @@ void SettingsWindow::RefreshTimetable(const std::vector<classtime::Segment>& seg
   timetableScroll_.Content(timetable);
 }
 
+// —— 作息时间轴 ——
+
+double SettingsWindow::TimelineX(int minute) const {
+  return (minute - timelineStartMinute_) * timelinePxPerHour_ / 60.0;
+}
+
+int SettingsWindow::TimelineMinute(double x) const {
+  return timelineStartMinute_ +
+         static_cast<int>(std::lround(x * 60.0 / timelinePxPerHour_));
+}
+
+void SettingsWindow::PositionTimelineInitially() {
+  if (timelinePositioned_ || !timelineScroll_ || timelineScroll_.ScrollableWidth() <= 0) return;
+  const auto segments = classtime::SortedByStart(EditorBaseSegments(planScope_.SelectedIndex() != 1));
+  if (segments.empty()) {
+    timelinePositioned_ = true;
+    return;
+  }
+  const double target = std::clamp(TimelineX(segments.front().start.TotalMinutes()) - timelinePxPerHour_,
+                                   0.0, timelineScroll_.ScrollableWidth());
+  const bool changed = timelineScroll_.ChangeView(Windows::Foundation::IReference<double>{target},
+                                                   nullptr, nullptr, true);
+  timelinePositioned_ = changed || target == 0;
+}
+
+void SettingsWindow::RefreshTimeline(const std::vector<classtime::Segment>& segments) {
+  timelineStartMinute_ = 0;
+  timelineEndMinute_ = 24 * 60;
+  RebuildTimelineBlocks(segments);
+}
+
+void SettingsWindow::RebuildTimelineBlocks(const std::vector<classtime::Segment>& segments) {
+  // 拖动进行中不重建可视树，松手后的刷新会补齐。
+  if (timelineDragMode_ != TimelineDragMode::None || timelineDragPointer_) return;
+  timelineBlocks_.clear();
+  timelineCanvas_.Children().Clear();
+
+  const double pxPerMinute = timelinePxPerHour_ / 60.0;
+  const double canvasWidth = 24.0 * timelinePxPerHour_;
+  timelineCanvas_.Width(canvasWidth);
+  timelineCanvas_.Height(100);
+  const auto lineBrush = ResourceBrush(L"CardStrokeColorDefaultBrush",
+                                       Windows::UI::ColorHelper::FromArgb(40, 0, 0, 0));
+  const int labelStepHours = timelinePxPerHour_ >= 55 ? 1 : 2;
+
+  // 刻度：整点短线与时刻标签（低缩放时隔小时显示）。
+  for (int hour = 0; hour <= 24; ++hour) {
+    const double x = hour * timelinePxPerHour_;
+    Border tick;
+    tick.Width(1);
+    tick.Height(hour % labelStepHours == 0 ? 10 : 5);
+    tick.Background(lineBrush);
+    Canvas::SetLeft(tick, x - 0.5);
+    Canvas::SetTop(tick, 17);
+    timelineCanvas_.Children().Append(tick);
+    if (hour < 24 && hour % labelStepHours == 0) {
+      const classtime::TimeOfDay time{hour, 0};
+      auto label = MakeSubtitle(FormatClock(time));
+      Canvas::SetLeft(label, x + 3);
+      Canvas::SetTop(label, 0);
+      timelineCanvas_.Children().Append(label);
+    }
+  }
+  Border lane;
+  lane.Width(canvasWidth);
+  lane.Height(1);
+  lane.Background(lineBrush);
+  Canvas::SetTop(lane, 27);
+  timelineCanvas_.Children().Append(lane);
+
+  // “现在”标记：与引擎同一时钟取值，随刷新重画。
+  const auto now = NowClock();
+  const int nowMinute = now.MinutesSinceMidnight();
+  if (nowMinute >= timelineStartMinute_ && nowMinute < timelineEndMinute_) {
+    Border marker;
+    marker.Width(2);
+    marker.Height(70);
+    marker.Opacity(0.55);
+    marker.Background(SolidColorBrush(SegmentColor(classtime::SegmentKind::Focus)));
+    Canvas::SetLeft(marker, TimelineX(nowMinute) - 1);
+    Canvas::SetTop(marker, 27);
+    timelineCanvas_.Children().Append(marker);
+  }
+
+  if (segments.empty()) {
+    timelineStatusText_.Text(L"暂无时段：双击时间轴空白处，在对应时刻新增。");
+    return;
+  }
+  timelineStatusText_.Text(planScope_.SelectedIndex() != 1
+                               ? L"显示常规模板时段；拖动调整会保存到模板。"
+                               : L"显示今天的计划；拖动调整只影响今天。");
+
+  for (const auto& segment : segments) {
+    TimelineBlock block;
+    block.id = segment.id;
+    block.startMinute = segment.start.TotalMinutes();
+    block.endMinute = segment.end.TotalMinutes();
+
+    const auto kindColor = SegmentColor(segment.kind);
+    auto fill = kindColor;
+    fill.A = 64;
+
+    block.host = Border();
+    block.host.Height(52);
+    block.host.Width(std::max(4.0, (block.endMinute - block.startMinute) * pxPerMinute));
+    block.host.CornerRadius(CornerRadius{6, 6, 6, 6});
+    block.host.Background(SolidColorBrush(fill));
+    block.host.BorderBrush(SolidColorBrush(kindColor));
+    block.host.BorderThickness(Thickness{1, 1, 1, 1});
+    block.host.VerticalAlignment(VerticalAlignment::Top);
+    Canvas::SetLeft(block.host, TimelineX(block.startMinute));
+    Canvas::SetTop(block.host, 32);
+
+    // 内部三列：左右拖动把手 + 中间名称与时间。
+    auto layout = Grid();
+    ColumnDefinition gripLeftColumn;
+    gripLeftColumn.Width(GridLengthHelper::FromValueAndType(12, GridUnitType::Pixel));
+    ColumnDefinition contentColumn;
+    contentColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+    ColumnDefinition gripRightColumn;
+    gripRightColumn.Width(GridLengthHelper::FromValueAndType(12, GridUnitType::Pixel));
+    layout.ColumnDefinitions().Append(gripLeftColumn);
+    layout.ColumnDefinitions().Append(contentColumn);
+    layout.ColumnDefinitions().Append(gripRightColumn);
+
+    const auto makeGrip = [&kindColor]() {
+      Border grip;
+      grip.Background(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)));
+      auto bar = Border();
+      auto barColor = kindColor;
+      barColor.A = 175;
+      bar.Width(4);
+      bar.Height(24);
+      bar.CornerRadius(CornerRadius{2, 2, 2, 2});
+      bar.Background(SolidColorBrush(barColor));
+      bar.HorizontalAlignment(HorizontalAlignment::Center);
+      bar.VerticalAlignment(VerticalAlignment::Center);
+      grip.Child(bar);
+      return grip;
+    };
+    block.leftGrip = makeGrip();
+    block.leftGrip.PointerPressed([this, id = segment.id](auto const&,
+                                                          Input::PointerRoutedEventArgs const& args) {
+      StartTimelineDrag(TimelineDragMode::ResizeStart, id, args);
+    });
+    layout.Children().Append(block.leftGrip);
+
+    auto content = StackPanel();
+    content.Margin(Thickness{2, 4, 2, 4});
+    content.Spacing(1);
+    block.label = MakeText(ToWide(segment.label), 12);
+    block.label.TextTrimming(TextTrimming::CharacterEllipsis);
+    content.Children().Append(block.label);
+    block.sub = MakeText(FormatRange(segment), 11,
+                         ResourceBrush(L"TextFillColorSecondaryBrush", SecondaryColor()));
+    block.sub.TextTrimming(TextTrimming::CharacterEllipsis);
+    content.Children().Append(block.sub);
+    Grid::SetColumn(content, 1);
+    layout.Children().Append(content);
+
+    block.rightGrip = makeGrip();
+    Grid::SetColumn(block.rightGrip, 2);
+    block.rightGrip.PointerPressed([this, id = segment.id](auto const&,
+                                                           Input::PointerRoutedEventArgs const& args) {
+      StartTimelineDrag(TimelineDragMode::ResizeEnd, id, args);
+    });
+    layout.Children().Append(block.rightGrip);
+
+    block.host.Child(layout);
+    // 整体拖动与双击编辑。
+    block.host.PointerPressed([this, id = segment.id](auto const&,
+                                                      Input::PointerRoutedEventArgs const& args) {
+      StartTimelineDrag(TimelineDragMode::Move, id, args);
+    });
+    block.host.DoubleTapped([this, segment](auto const&,
+                                            Input::DoubleTappedRoutedEventArgs const& args) {
+      OpenEditor(segment);
+      args.Handled(true);
+    });
+    const std::wstring description = ToWide(segment.label) + L"  " + FormatRange(segment);
+    Automation::AutomationProperties::SetName(block.host, hstring(L"时间轴时段 " + description));
+    ToolTipService::SetToolTip(block.host, box_value(hstring(description)));
+
+    timelineCanvas_.Children().Append(block.host);
+    timelineBlocks_.push_back(std::move(block));
+  }
+}
+
+void SettingsWindow::StartTimelineDrag(TimelineDragMode mode, const std::string& id,
+                                       Input::PointerRoutedEventArgs const& args) {
+  if (timelineDragMode_ != TimelineDragMode::None || editorOpen_) return;
+  const auto block = std::find_if(timelineBlocks_.begin(), timelineBlocks_.end(),
+                                  [&id](const TimelineBlock& item) { return item.id == id; });
+  if (block == timelineBlocks_.end()) return;
+  if (!timelineCanvas_.CapturePointer(args.Pointer())) return;
+  timelineDragMode_ = mode;
+  timelineDragId_ = id;
+  timelineDragStart_ = block->startMinute;
+  timelineDragEnd_ = block->endMinute;
+  timelineDragCurrentStart_ = block->startMinute;
+  timelineDragCurrentEnd_ = block->endMinute;
+  timelineDragAnchorMinute_ =
+      TimelineMinute(args.GetCurrentPoint(timelineCanvas_).Position().X);
+  timelineDragPointer_ = args.Pointer().PointerId();
+  args.Handled(true);
+}
+
+void SettingsWindow::FinishTimelineDrag(bool commit) {
+  if (timelineDragMode_ == TimelineDragMode::None) return;
+  timelineDragPointer_.reset();
+  const std::string id = std::exchange(timelineDragId_, std::string{});
+  const int start = timelineDragCurrentStart_;
+  const int end = timelineDragCurrentEnd_;
+  const bool changed = start != timelineDragStart_ || end != timelineDragEnd_;
+  timelineDragMode_ = TimelineDragMode::None;
+  // 释放捕获可能同步触发 PointerCaptureLost，先清除拖动状态防止重复提交。
+  if (timelineCanvas_) timelineCanvas_.ReleasePointerCaptures();
+
+  if (commit && changed) {
+    ApplyTimelineEdit(id, start, end);
+    return;
+  }
+  // 未移动时不重建点击目标，让双击仍能打开编辑器。
+  if (!changed) return;
+  // 取消时重绘恢复原位。
+  const bool permanent = planScope_.SelectedIndex() != 1;
+  RebuildTimelineBlocks(classtime::SortedByStart(EditorBaseSegments(permanent)));
+}
+
+void SettingsWindow::ApplyTimelineEdit(const std::string& id, int startMinute, int endMinute) {
+  const bool permanent = planScope_.SelectedIndex() != 1;
+  auto base = EditorBaseSegments(permanent);
+  auto target = std::find_if(base.begin(), base.end(),
+                             [&id](const classtime::Segment& item) { return item.id == id; });
+  if (target == base.end()) {
+    ShowScheduleNotice(L"所选计划里没有这个时段，已恢复原时间。", true);
+    RefreshSegments();
+    return;
+  }
+  const auto start = classtime::TimeOfDay::FromTotalMinutes(startMinute);
+  const auto end = classtime::TimeOfDay::FromTotalMinutes(endMinute);
+  if (!start || !end || end->TotalMinutes() <= start->TotalMinutes()) {
+    ShowScheduleNotice(L"调整后的时间不合法，已恢复原时间。", true);
+    RefreshSegments();
+    return;
+  }
+  target->start = *start;
+  target->end = *end;
+  auto sorted = classtime::SortedByStart(base);
+  if (!classtime::ValidateSegments(sorted, nullptr)) {
+    ShowScheduleNotice(L"调整后的时段与其他时段重叠，已恢复原时间。", true);
+    RefreshSegments();
+    return;
+  }
+  std::string error;
+  const auto scope = permanent ? Services::SaveScope::Permanent : Services::SaveScope::TodayOnly;
+  if (!Services::Instance().ApplyScheduleEdit(sorted, scope, &error)) {
+    ShowScheduleNotice(ToWide(error), true);
+    RefreshSegments();
+    return;
+  }
+  ShowScheduleNotice(permanent ? (Services::Instance().usingTodayOverride()
+                                      ? L"时间轴调整已保存到常规模板；今天仍按临时计划执行。"
+                                      : L"时间轴调整已保存到常规模板。")
+                                : L"时间轴调整已保存到今天的计划。");
+  // 保存触发的状态广播会刷新整页，包括时间轴本身。
+}
+
 void SettingsWindow::RefreshDisplayControls() {
   const auto& presentation = Services::Instance().config().presentation;
   using View = Presentation::View;
@@ -1656,6 +2258,28 @@ void SettingsWindow::RefreshDisplayControls() {
   visibleToggle_.IsOn(presentation.visible);
   edgeAutoHideToggle_.IsOn(presentation.autoHideAtEdge);
   flushToggle_.IsOn(presentation.flushWithEdge);
+
+  // 长条长度与背景色：只对分节长条有意义；取色器在程序化赋值时由 syncing_ 屏蔽。
+  const bool wasSyncing = std::exchange(syncing_, true);
+  barLengthPanel_.Visibility(presentation.view == View::Bar && !screenEdge
+                                 ? Visibility::Visible
+                                 : Visibility::Collapsed);
+  barColorPanel_.Visibility(presentation.view == View::Bar ? Visibility::Visible
+                                                           : Visibility::Collapsed);
+  const int barLength = pendingBarLength_.value_or(presentation.EffectiveBarLength());
+  barLengthSlider_.Value(barLength);
+  barLengthValue_.Text(hstring((!pendingBarLength_ && presentation.barLengthDip == 0
+                                   ? L"默认 · " : L"") +
+                              std::to_wstring(barLength) + L" DIP"));
+  const auto background = pendingBarBackground_.value_or(presentation.barBackground);
+  const bool customBackground = !background.empty();
+  barBackgroundToggle_.IsOn(customBackground);
+  barColorPicker_.Visibility(customBackground ? Visibility::Visible : Visibility::Collapsed);
+  if (customBackground) {
+    barColorPicker_.Color(WidgetAppearance::ParseHexColor(background));
+  }
+  syncing_ = wasSyncing;
+
   RefreshDisplayPreview(presentation);
   RefreshPreviewSummary();
 }
@@ -1778,7 +2402,38 @@ void SettingsWindow::CommitScreenEdgeThickness() {
   Services::Instance().UpdatePresentation(presentation);
 }
 
-void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
+void SettingsWindow::CommitBarLength() {
+  if (barLengthTimer_) barLengthTimer_.Stop();
+  if (!pendingBarLength_) return;
+  auto presentation = Services::Instance().config().presentation;
+  const int length = *std::exchange(pendingBarLength_, std::nullopt);
+  if (presentation.barLengthDip == length) return;
+  presentation.barLengthDip = length;
+  Services::Instance().UpdatePresentation(presentation);
+}
+
+void SettingsWindow::CommitBarBackground() {
+  if (barColorTimer_) barColorTimer_.Stop();
+  if (!pendingBarBackground_) return;
+  auto presentation = Services::Instance().config().presentation;
+  const std::string background = *std::exchange(pendingBarBackground_, std::nullopt);
+  if (presentation.barBackground == background) return;
+  presentation.barBackground = background;
+  Services::Instance().UpdatePresentation(presentation);
+}
+
+void SettingsWindow::CommitTemplateName() {
+  if (templateNameTimer_) templateNameTimer_.Stop();
+  const std::wstring name = std::exchange(pendingTemplateName_, std::wstring{});
+  const std::string id = std::exchange(pendingTemplateId_, std::string{});
+  if (id.empty() || name.empty()) return;
+  Services::Instance().RenameTemplate(id, ToUtf8(name));
+}
+
+void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation) {
+  auto presentation = savedPresentation;
+  if (pendingBarLength_) presentation.barLengthDip = *pendingBarLength_;
+  if (pendingBarBackground_) presentation.barBackground = *pendingBarBackground_;
   using View = Presentation::View;
   const int thickness = pendingThickness_.value_or(presentation.screenEdgeThickness);
   screenEdgeValue_.Text(std::to_wstring(thickness));
@@ -1791,7 +2446,9 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
   if (previewDrawn_ && last.view == presentation.view && last.scope == presentation.scope &&
       last.edge == presentation.edge && last.visible == presentation.visible &&
       last.autoHideAtEdge == presentation.autoHideAtEdge &&
-      last.flushWithEdge == presentation.flushWithEdge && latest.expanded == expanded &&
+      last.flushWithEdge == presentation.flushWithEdge &&
+      last.barLengthDip == presentation.barLengthDip &&
+      last.barBackground == presentation.barBackground && latest.expanded == expanded &&
       latest.thickness == thickness) return;
 
   // A new click starts from whichever layer is still most visible.
@@ -1837,12 +2494,13 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
     shape.Fill(brush);
     place(shape, x, y);
   };
-  const auto panel = [&](double x, double y, double width, double height, CornerRadius corners) {
+  const auto panel = [&](double x, double y, double width, double height, CornerRadius corners,
+                         const Brush& surface) {
     Border shell;
     shell.Width(width);
     shell.Height(height);
     shell.CornerRadius(corners);
-    shell.Background(accentSurface);
+    shell.Background(surface);
     shell.BorderThickness(Thickness{0.75, 0.75, 0.75, 0.75});
     shell.BorderBrush(color(203, 219, 238));
     place(shell, x, y);
@@ -1918,12 +2576,12 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
     if (side) {
       const double x = dockLeft ? left + 3 : left + width - 12;
       const double y = top + height / 2 - 26;
-      panel(x, y, 9, 52, CornerRadius{4.5, 4.5, 4.5, 4.5});
+      panel(x, y, 9, 52, CornerRadius{4.5, 4.5, 4.5, 4.5}, accentSurface);
       rect(x + 3, y + gripOffset, 3, gripLength, gripTrack, 1.5);
       rect(x + 3, y + gripOffset, 3, gripLength * segmentProgress, segmentAccent, 1.5);
     } else {
       const double y = dockTop ? top : top + height - 9;
-      panel(center - 26, y, 52, 9, CornerRadius{4.5, 4.5, 4.5, 4.5});
+      panel(center - 26, y, 52, 9, CornerRadius{4.5, 4.5, 4.5, 4.5}, accentSurface);
       rect(center - gripLength / 2, y + 3, gripLength, 3, gripTrack, 1.5);
       rect(center - gripLength / 2, y + 3, gripLength * segmentProgress, 3, segmentAccent, 1.5);
     }
@@ -1931,14 +2589,21 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
     return;
   }
   if (presentation.view == View::Bar) {
+    // 长条长度按设置等比映射到预览（680 → 默认形状），自定义背景色优先。
+    const Brush barSurface = !presentation.barBackground.empty()
+                                 ? SolidColorBrush(WidgetAppearance::ParseHexColor(
+                                       presentation.barBackground))
+                                 : Brush(accentSurface);
     if (side) {
+      const double barLen = std::clamp(110.0 * presentation.EffectiveBarLength() / 420.0, 60.0, 136.0);
       const double inset = flush ? 2 : 8;
       const double barX = dockLeft ? left + inset : left + width - inset - 21;
-      const double barY = top + height / 2 - 55;
-      panel(barX, barY, 21, 110, WidgetAppearance::DockCorners(10.5, presentation.edge, flush, 3));
+      const double barY = top + height / 2 - barLen / 2;
+      panel(barX, barY, 21, barLen,
+            WidgetAppearance::DockCorners(10.5, presentation.edge, flush, 3), barSurface);
       const int segments = allDay ? 6 : 3;
       const double innerTop = barY + 8;
-      const double innerHeight = 94;
+      const double innerHeight = barLen - 16;
       constexpr double gap = 4;
       const double segmentHeight = (innerHeight - gap * (segments - 1)) / segments;
       const int current = allDay ? 3 : 1;
@@ -1953,12 +2618,14 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
       return;
     }
     const double y = dockTop ? top + (flush ? 2 : 9) : top + height - (flush ? 2 : 9) - 21;
+    const double barLen = std::clamp(249.0 * presentation.EffectiveBarLength() / 680.0, 96.0, 330.0);
     const int segments = allDay ? 6 : 3;
-    constexpr double segmentWidth = 34;
-    constexpr double gap = 5;
-    const double start = center - (segments * (segmentWidth + gap) - gap) / 2;
-    panel(start - 10, y, 2 * (center - start) + 20, 21,
-          WidgetAppearance::DockCorners(10.5, presentation.edge, flush, 3));
+    const double gap = 5;
+    const double contentWidth = barLen - 20;
+    const double segmentWidth = (contentWidth - gap * (segments - 1)) / segments;
+    const double start = center - contentWidth / 2;
+    panel(start - 10, y, barLen, 21,
+          WidgetAppearance::DockCorners(10.5, presentation.edge, flush, 3), barSurface);
     for (int i = 0; i < segments; ++i) {
       const double x = start + i * (segmentWidth + gap);
       rect(x, y + 8, segmentWidth, 5, color(202, 221, 242), 2.5);
@@ -2425,17 +3092,48 @@ std::vector<classtime::Segment> SettingsWindow::EditorBaseSegments(bool permanen
   return Services::Instance().effectiveSegments();
 }
 
-void SettingsWindow::OpenNewEditor() {
+void SettingsWindow::OpenNewEditor() { OpenNewEditorAt(8 * 60); }
+
+void SettingsWindow::OpenNewEditorAt(int minute) {
   newSegment_ = true;
   editingId_ = "seg-" + std::to_string(GetTickCount64());
   syncing_ = true;
   editorTitle_.Text(L"新增时段");
   editorName_.Text(L"");
   editorKind_.SelectedIndex(0);
-  editorStart_.Text(L"08:00");
-  editorEnd_.Text(L"08:45");
+  const int startMinute = std::clamp(minute, 0, 1438);
+  const int duration = std::min(45, 1439 - startMinute);
+  const auto start = classtime::TimeOfDay::FromTotalMinutes(startMinute);
+  const auto end = classtime::TimeOfDay::FromTotalMinutes(startMinute + duration);
+  editorStart_.Text(hstring(FormatClock(start.value_or(classtime::TimeOfDay{8, 0}))));
+  editorEnd_.Text(hstring(FormatClock(end.value_or(classtime::TimeOfDay{8, 45}))));
   editorSlider_.Maximum(180);
-  SyncDurationControls(45);
+  SyncDurationControls(duration);
+  ShowEditor();
+}
+
+void SettingsWindow::OpenDuplicateEditor(const classtime::Segment& segment) {
+  newSegment_ = true;
+  editingId_ = "seg-" + std::to_string(GetTickCount64());
+  syncing_ = true;
+  editorTitle_.Text(L"复制时段");
+  editorName_.Text(hstring(ToWide(segment.label)));
+  editorKind_.SelectedIndex(KindToIndex(segment.kind));
+  const int duration = std::clamp(segment.DurationMinutes(), 1, 1439);
+  // 优先接在原时段之后；当天放不下则退回与原时段相同的起点。
+  int startMinute = segment.end.TotalMinutes();
+  if (startMinute + duration > 1439) startMinute = segment.start.TotalMinutes();
+  startMinute = std::clamp(startMinute, 0, 1439 - duration);
+  const auto start = classtime::TimeOfDay::FromTotalMinutes(startMinute);
+  const auto end = classtime::TimeOfDay::FromTotalMinutes(startMinute + duration);
+  if (!start || !end) {
+    OpenNewEditor();
+    return;
+  }
+  editorStart_.Text(hstring(FormatClock(*start)));
+  editorEnd_.Text(hstring(FormatClock(*end)));
+  editorSlider_.Maximum(segment.kind == classtime::SegmentKind::Focus ? 180 : 240);
+  SyncDurationControls(duration);
   ShowEditor();
 }
 

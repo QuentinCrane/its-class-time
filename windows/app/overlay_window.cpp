@@ -20,10 +20,9 @@ namespace {
 
 using View = classtime::PresentationSettings::View;
 
-constexpr double kBarWidthDip = 680.0;
+// 长条沿贴边方向的整体长度可由用户指定；默认保留原有的横、竖尺寸。
 constexpr double kBarHeightDip = 32.0;
 constexpr double kSideBarThicknessDip = 34.0;
-constexpr double kSideBarLengthDip = 420.0;
 constexpr double kBarHostThicknessDip = 24.0;
 constexpr double kRingDiameterDip = 156.0;
 constexpr double kBarInsetDip = 17;
@@ -348,6 +347,29 @@ void OverlayWindow::BuildBar() {
   segmentPanel_.VerticalAlignment(VerticalAlignment::Center);
   barRoot_.Child(segmentPanel_);
   root_.Children().Append(barRoot_);
+  barSurfaceSignature_.clear();
+  ApplyBarSurface();
+}
+
+void OverlayWindow::ApplyBarSurface() {
+  if (!barRoot_) return;
+  const Palette palette = CurrentPalette();
+  Windows::UI::Color color = palette.background;
+  if (!barBackgroundHex_.empty()) color = WidgetAppearance::ParseHexColor(barBackgroundHex_);
+  // 系统背景色或自定义色变化（含深浅色切换）时才重建画刷。
+  const std::string signature = barBackgroundHex_ + ":" + std::to_string(color.R) + "," +
+                                std::to_string(color.G) + "," + std::to_string(color.B);
+  if (barSurfaceSignature_ == signature) return;
+  barSurfaceSignature_ = signature;
+  barRoot_.Background(WidgetAppearance::Surface(color));
+  if (barBackgroundHex_.empty()) {
+    barRoot_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 26)));
+  } else {
+    const bool dark = 299 * color.R + 587 * color.G + 114 * color.B < 128000;
+    const auto foreground = dark ? Windows::UI::ColorHelper::FromArgb(255, 255, 255, 255)
+                                 : Windows::UI::ColorHelper::FromArgb(255, 0, 0, 0);
+    barRoot_.BorderBrush(SolidColorBrush(WithAlpha(foreground, 55)));
+  }
 }
 
 void OverlayWindow::BuildRing() {
@@ -1206,8 +1228,9 @@ void OverlayWindow::ApplyPresentation() {
   const bool edgeChanged = presentation.edge != edge_;
   const bool offsetChanged = presentation.offsetX != offsetX_ || presentation.offsetY != offsetY_;
   const bool monitorChanged = presentation.monitorId != monitorId_;
+  const bool barLengthChanged = presentation.barLengthDip != barLengthDip_;
   const bool layoutChanged = viewChanged || monitorChanged || edgeChanged || offsetChanged ||
-                             flushChanged;
+                             flushChanged || barLengthChanged;
   const bool orientationChanged = IsSideEdge(edge_) != IsSideEdge(presentation.edge);
   const bool canAnimate = visible_ && !IsIconic(hwnd_) && !dragPointer_ &&
                           !monitorChanged && Motion::Enabled();
@@ -1219,6 +1242,9 @@ void OverlayWindow::ApplyPresentation() {
   offsetX_ = presentation.offsetX;
   offsetY_ = presentation.offsetY;
   flushWithEdge_ = presentation.flushWithEdge;
+  barLengthDip_ = presentation.barLengthDip;
+  barBackgroundHex_ = presentation.barBackground;
+  ApplyBarSurface();
 
   autoHideAtEdge_ = presentation.autoHideAtEdge;
   if (view_ == View::ScreenEdge || wasScreenEdge) {
@@ -1310,14 +1336,19 @@ RECT OverlayWindow::ComputeLayoutRect() {
   const int workWidth = work.right - work.left;
   const int workHeight = work.bottom - work.top;
 
-  double widthDip = kBarWidthDip;
+  // 长条整体长度可自定义：横向控制宽度，竖向（左右贴边）控制高度并受工作区约束。
+  const int barLength = barLengthDip_ != classtime::PresentationSettings::kDefaultBarLength
+                            ? barLengthDip_
+                            : side ? classtime::PresentationSettings::kDefaultVerticalBarLength
+                                   : classtime::PresentationSettings::kDefaultHorizontalBarLength;
+  double widthDip = barLength;
   double heightDip = kBarHeightDip;
   if (ring) {
     widthDip = heightDip = kRingDiameterDip;
   } else if (side) {
     widthDip = kSideBarThicknessDip;
     const double available = std::max(80.0, workHeight / dpiScale_ - 2.0 * kSnapInsetDip);
-    heightDip = std::min(kSideBarLengthDip, available);
+    heightDip = std::min(static_cast<double>(barLength), available);
   }
   const int fullWidth = std::min(static_cast<int>(std::lround(widthDip * dpiScale_)), workWidth);
   const int fullHeight = std::min<int>(static_cast<int>(std::lround(heightDip * dpiScale_)), workHeight);
@@ -1622,7 +1653,15 @@ void OverlayWindow::RefreshBar() {
   const auto& services = Services::Instance();
   const auto& snapshot = services.snapshot();
   const auto now = NowClock();
-  const Palette palette = CurrentPalette();
+  Palette palette = CurrentPalette();
+  if (!barBackgroundHex_.empty()) {
+    const auto background = WidgetAppearance::ParseHexColor(barBackgroundHex_);
+    const bool dark = 299 * background.R + 587 * background.G + 114 * background.B < 128000;
+    palette.foreground = dark ? Windows::UI::ColorHelper::FromArgb(255, 255, 255, 255)
+                              : Windows::UI::ColorHelper::FromArgb(255, 0, 0, 0);
+  }
+  // 深浅色切换或自定义背景色变化时刷新长条表面。
+  ApplyBarSurface();
 
   RECT client{};
   if (!GetClientRect(hwnd_, &client)) return;
@@ -1631,7 +1670,8 @@ void OverlayWindow::RefreshBar() {
   const bool vertical = IsSideEdge(edge_);
   const auto visible = services.VisibleSegments();
   std::string signature = std::string(vertical ? "v:" : "h:") + std::to_string(clientWidth) +
-                          ":" + std::to_string(clientHeight) + ":" + std::to_string(dpiScale_);
+                          ":" + std::to_string(clientHeight) + ":" + std::to_string(dpiScale_) +
+                          ":bg:" + barBackgroundHex_;
   for (const auto& segment : visible) {
     signature += ":" + segment.id + ":" + std::to_string(segment.DurationMinutes()) + ":" +
                  classtime::SegmentKindToString(segment.kind);

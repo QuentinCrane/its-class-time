@@ -24,6 +24,7 @@
 9. [Unpackaged Windows App SDK runtime](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/use-windows-app-sdk-run-time) — 解包运行的初始化差异（本项目当前使用这条路径）。
 10. [microsoft-ui-xaml #7606](https://github.com/microsoft/microsoft-ui-xaml/issues/7606) — 纯代码构建 WinUI 3 时，`XamlControlsResources` 要求应用实现 `IXamlMetadataProvider`，否则控件默认样式解析失败。
 11. [Inno Setup 帮助文档](https://jrsoftware.org/ishelp/) — 当前 Windows 离线安装包使用的打包工具。
+12. [ScrollViewer.ChangeView](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.controls.scrollviewer.changeview?view=windows-app-sdk-1.6) — 时间轴首次定位；2026-11-25 核对 Windows App SDK 1.6 支持该接口。
 
 ## GitHub
 

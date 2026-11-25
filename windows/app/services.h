@@ -55,6 +55,9 @@ class Services {
   // 修改当前模板的生效星期。
   void SetActiveWeekdays(const std::vector<int>& weekdays);
 
+  // 重命名当前模板（空名称忽略）。
+  void RenameTemplate(const std::string& templateId, const std::string& name);
+
   // 将选中模板恢复为随包预设（仅影响当前模板）。
   bool RestorePreset(std::string* error);
 

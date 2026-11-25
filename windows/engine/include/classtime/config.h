@@ -19,6 +19,12 @@ struct PresentationSettings {
   static constexpr int kMinScreenEdgeThickness = 4;
   static constexpr int kMaxScreenEdgeThickness = 24;
   static constexpr int kDefaultScreenEdgeThickness = 10;
+  static constexpr int kMinBarLength = 240;
+  static constexpr int kMaxBarLength = 1600;
+  // 0 保留旧版本按方向设置的默认长度；非零值为用户指定的 DIP。
+  static constexpr int kDefaultBarLength = 0;
+  static constexpr int kDefaultHorizontalBarLength = 680;
+  static constexpr int kDefaultVerticalBarLength = 420;
   View view = View::Bar;
   Scope scope = Scope::AllDay;
   Edge edge = Edge::Bottom;
@@ -27,9 +33,21 @@ struct PresentationSettings {
   // 贴边时是否与任务栏/屏幕边缘无缝衔接（0 间距），否则保留悬浮间距。
   bool flushWithEdge = true;
   int screenEdgeThickness = kDefaultScreenEdgeThickness;  // DIP
+  // 分节长条沿贴边方向的整体长度（DIP）；顶部/底部控制宽度，左右控制竖向高度。
+  // 圆环与屏幕边框不受影响。
+  int barLengthDip = kDefaultBarLength;
+  int timelineSnapMinutes = 5;
+  // 长条背景色，"RRGGBB" 十六进制字符串；空表示跟随系统背景色。
+  std::string barBackground;
   std::string monitorId;  // 显示器设备名；空表示主屏
   int offsetX = 0;        // 相对工作区水平居中位置的 DIP 偏移
   int offsetY = 12;       // 距离工作区边缘的 DIP
+
+  int EffectiveBarLength() const {
+    if (barLengthDip != kDefaultBarLength) return barLengthDip;
+    return edge == Edge::Left || edge == Edge::Right ? kDefaultVerticalBarLength
+                                                    : kDefaultHorizontalBarLength;
+  }
 };
 
 struct NotificationSettings {

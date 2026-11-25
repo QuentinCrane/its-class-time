@@ -312,6 +312,21 @@ void Services::SetActiveWeekdays(const std::vector<int>& weekdays) {
   NotifyChanged();
 }
 
+void Services::RenameTemplate(const std::string& templateId, const std::string& name) {
+  {
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (name.empty()) return;
+    classtime::Schedule* schedule =
+        classtime::FindTemplateMutable(config_, templateId);
+    if (schedule == nullptr || schedule->name == name) return;
+    schedule->name = name;
+    classtime::BumpRevision(config_);
+    PersistConfig();
+    RecomputeLocked();
+  }
+  NotifyChanged();
+}
+
 bool Services::RestorePreset(std::string* error) {
   std::vector<classtime::Schedule> presets;
   LoadPresets(&presets);

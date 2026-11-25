@@ -19,4 +19,30 @@ inline CornerRadius DockCorners(double radius, Edge edge, bool flush, double edg
 
 inline Brush Surface(Color background) { return SolidColorBrush(background); }
 
+// —— 自定义颜色（"RRGGBB" 十六进制，配置层已校验） ——
+
+inline Color ParseHexColor(const std::string& hex) {
+  const auto digit = [](char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return c - 'A' + 10;
+  };
+  return winrt::Windows::UI::ColorHelper::FromArgb(
+      255, static_cast<uint8_t>(digit(hex[0]) * 16 + digit(hex[1])),
+      static_cast<uint8_t>(digit(hex[2]) * 16 + digit(hex[3])),
+      static_cast<uint8_t>(digit(hex[4]) * 16 + digit(hex[5])));
+}
+
+inline std::string ColorToHex(Color color) {
+  const char* digits = "0123456789ABCDEF";
+  std::string hex;
+  hex += digits[color.R >> 4];
+  hex += digits[color.R & 15];
+  hex += digits[color.G >> 4];
+  hex += digits[color.G & 15];
+  hex += digits[color.B >> 4];
+  hex += digits[color.B & 15];
+  return hex;
+}
+
 }  // namespace ClassTimeApp::WidgetAppearance

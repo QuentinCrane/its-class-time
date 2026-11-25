@@ -105,6 +105,18 @@ PresentationSettings::Edge EdgeFromString(const std::string& text) {
   return PresentationSettings::Edge::Bottom;
 }
 
+// "RRGGBB"（大小写均可）；无效或空字符串都视为“跟随系统”。
+bool IsValidHexColor(const std::string& text) {
+  if (text.size() != 6) return false;
+  for (const char c : text) {
+    const bool digit = c >= '0' && c <= '9';
+    const bool lower = c >= 'a' && c <= 'f';
+    const bool upper = c >= 'A' && c <= 'F';
+    if (!digit && !lower && !upper) return false;
+  }
+  return true;
+}
+
 bool ParseScheduleValue(const json::Value& root, Schedule& schedule, std::string* error) {
   if (!root.IsObject()) {
     if (error) *error = "模板根节点必须是对象";
@@ -244,6 +256,21 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
           PresentationSettings::kMinScreenEdgeThickness,
           PresentationSettings::kMaxScreenEdgeThickness);
     }
+    if (const auto* barLength = presentation->Find("barLengthDip")) {
+      const int value = barLength->AsInt(PresentationSettings::kDefaultBarLength);
+      config.presentation.barLengthDip = value == PresentationSettings::kDefaultBarLength
+          ? value : std::clamp(value, PresentationSettings::kMinBarLength,
+                               PresentationSettings::kMaxBarLength);
+    }
+    if (const auto* snap = presentation->Find("timelineSnapMinutes")) {
+      const int value = snap->AsInt(5);
+      if (value == 1 || value == 5 || value == 15) config.presentation.timelineSnapMinutes = value;
+    }
+    if (const auto* background = presentation->Find("barBackground")) {
+      const auto value = background->AsString();
+      // 只接受合法的 RRGGBB；无效值按“跟随系统”处理，不让整份配置失败。
+      if (IsValidHexColor(value)) config.presentation.barBackground = value;
+    }
     if (const json::Value* monitor = presentation->Find("monitorId")) {
       config.presentation.monitorId = monitor->AsString();
     }
@@ -316,6 +343,9 @@ std::string SerializeConfig(const AppConfig& config) {
   presentation.Set("autoHideAtEdge", json::Value::MakeBool(config.presentation.autoHideAtEdge));
   presentation.Set("flushWithEdge", json::Value::MakeBool(config.presentation.flushWithEdge));
   presentation.Set("screenEdgeThickness", json::Value::MakeNumber(config.presentation.screenEdgeThickness));
+  presentation.Set("barLengthDip", json::Value::MakeNumber(config.presentation.barLengthDip));
+  presentation.Set("timelineSnapMinutes", json::Value::MakeNumber(config.presentation.timelineSnapMinutes));
+  presentation.Set("barBackground", json::Value::MakeString(config.presentation.barBackground));
   presentation.Set("monitorId", json::Value::MakeString(config.presentation.monitorId));
   presentation.Set("offsetX", json::Value::MakeNumber(config.presentation.offsetX));
   presentation.Set("offsetY", json::Value::MakeNumber(config.presentation.offsetY));

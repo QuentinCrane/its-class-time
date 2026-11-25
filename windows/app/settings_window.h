@@ -1,7 +1,10 @@
 // 设置窗口：纯 C++/WinUI 3 构建界面，不依赖 XAML 代码生成。
 #pragma once
 
+#include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
+
+#include "timeline_edit.h"
 
 namespace ClassTimeApp {
 
@@ -14,17 +17,45 @@ class SettingsWindow {
   void ApplyState(bool presentationOnly = false);
 
  private:
+  // 作息时间轴拖动模式与时段块视觉。
+  struct TimelineBlock {
+    winrt::Microsoft::UI::Xaml::Controls::Border host{nullptr};
+    winrt::Microsoft::UI::Xaml::Controls::Border leftGrip{nullptr};
+    winrt::Microsoft::UI::Xaml::Controls::Border rightGrip{nullptr};
+    winrt::Microsoft::UI::Xaml::Controls::TextBlock label{nullptr};
+    winrt::Microsoft::UI::Xaml::Controls::TextBlock sub{nullptr};
+    std::string id;
+    int startMinute = 0;
+    int endMinute = 0;
+  };
+
   void Build();
   void RefreshAll();
   void RefreshTemplates();
   void RefreshWeekdays();
   void RefreshSegments();
   void RefreshTimetable(const std::vector<classtime::Segment>& segments, bool permanent);
+  // 作息时间轴：刻度 + 可拖动时段块；拖动松手后校验并保存。
+  void RefreshTimeline(const std::vector<classtime::Segment>& segments);
+  void RebuildTimelineBlocks(const std::vector<classtime::Segment>& segments);
+  void FinishTimelineDrag(bool commit);
+  void ApplyTimelineEdit(const std::string& id, int startMinute, int endMinute);
+  void PositionTimelineInitially();
+  // 拖动入口：Move/ResizeStart/ResizeEnd 共用，捕获指针并记录初始分钟。
+  void StartTimelineDrag(TimelineDragMode mode, const std::string& id,
+                         winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
+  double TimelineX(int minute) const;
+  int TimelineMinute(double x) const;
   void RefreshDisplayControls();
   void RefreshDisplayMonitors();
   void RefreshDisplayPreview(const classtime::PresentationSettings& presentation);
   void ApplyDisplayPanelVisibility(bool screenEdge, bool animate);
   void CommitScreenEdgeThickness();
+  // 长条长度/背景色：拖动期间只更新预览，停顿后合并保存。
+  void CommitBarLength();
+  void CommitBarBackground();
+  // 模板重命名防抖提交。
+  void CommitTemplateName();
   void RefreshNotificationControls();
   void RefreshGeneralControls();
   void ShowSection(const std::wstring& tag);
@@ -33,6 +64,10 @@ class SettingsWindow {
 
   void OpenEditor(const classtime::Segment& segment);
   void OpenNewEditor();
+  // 以原时段为蓝本打开“新增时段”编辑器（复制时段）。
+  void OpenDuplicateEditor(const classtime::Segment& segment);
+  // 在时间轴指定分钟处打开“新增时段”编辑器。
+  void OpenNewEditorAt(int minute);
   void ShowEditor();
   void CloseEditor();
   void FinishEditorClose();
@@ -114,6 +149,12 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer generalScroll_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ComboBox templateCombo_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock templateStatus_{nullptr};
+  // 模板重命名：输入防抖后写入当前模板名称。
+  winrt::Microsoft::UI::Xaml::Controls::TextBox templateNameBox_{nullptr};
+  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer templateNameTimer_{nullptr};
+  std::wstring templateRenameBase_;
+  std::wstring pendingTemplateName_;
+  std::string pendingTemplateId_;
   winrt::Microsoft::UI::Xaml::Controls::RadioButtons planScope_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::VariableSizedWrapGrid weekdayPanel_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer timetableScroll_{nullptr};
@@ -148,6 +189,17 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::TextBlock screenEdgeValue_{nullptr};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer thicknessTimer_{nullptr};
   std::optional<int> pendingThickness_;
+  // 长条长度（仅分节长条视图可见）与背景色。
+  winrt::Microsoft::UI::Xaml::Controls::StackPanel barLengthPanel_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Slider barLengthSlider_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock barLengthValue_{nullptr};
+  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer barLengthTimer_{nullptr};
+  std::optional<int> pendingBarLength_;
+  winrt::Microsoft::UI::Xaml::Controls::StackPanel barColorPanel_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch barBackgroundToggle_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ColorPicker barColorPicker_{nullptr};
+  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer barColorTimer_{nullptr};
+  std::optional<std::string> pendingBarBackground_;
   bool previewHovered_ = false;
   winrt::Microsoft::UI::Xaml::Controls::Button reanchorButton_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch visibleToggle_{nullptr};
@@ -167,6 +219,25 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::TextBlock scheduleDateText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel todayOverview_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Button clearTodayButton_{nullptr};
+  // 作息时间轴：类剪辑软件的水平刻度条，拖动调整时段。
+  winrt::Microsoft::UI::Xaml::Controls::ScrollViewer timelineScroll_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Canvas timelineCanvas_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Slider timelineZoomSlider_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ComboBox timelineSnapCombo_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock timelineStatusText_{nullptr};
+  double timelinePxPerHour_ = 90.0;
+  bool timelinePositioned_ = false;
+  int timelineStartMinute_ = 0;
+  int timelineEndMinute_ = 24 * 60;
+  std::vector<TimelineBlock> timelineBlocks_;
+  TimelineDragMode timelineDragMode_ = TimelineDragMode::None;
+  std::string timelineDragId_;
+  int timelineDragAnchorMinute_ = 0;  // 按下时指针所在的分钟（吸附前）
+  int timelineDragStart_ = 0;         // 按下时的时段起止（分钟，固定）
+  int timelineDragEnd_ = 0;
+  int timelineDragCurrentStart_ = 0;  // 拖动过程中的实时起止
+  int timelineDragCurrentEnd_ = 0;
+  std::optional<uint32_t> timelineDragPointer_;
   // 显示与位置：预览摘要文案。
   winrt::Microsoft::UI::Xaml::Controls::TextBlock previewSummaryText_{nullptr};
   // 通知：有效提醒状态、系统权限与最近一次测试结果。

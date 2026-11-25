@@ -12,6 +12,7 @@
 #include "classtime/json.h"
 #include "classtime/schedule.h"
 #include "classtime/time_engine.h"
+#include "../app/timeline_edit.h"
 
 namespace {
 
@@ -256,6 +257,9 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   config.presentation.monitorId = "\\\\.\\DISPLAY2";
   config.presentation.autoHideAtEdge = true;
   config.presentation.flushWithEdge = false;
+  config.presentation.barLengthDip = 1040;
+  config.presentation.barBackground = "2B4C7E";
+  config.presentation.timelineSnapMinutes = 1;
   config.notifications.muted = true;
   config.revision = 7;
 
@@ -275,6 +279,9 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   Check(parsed->presentation.monitorId == "\\\\.\\DISPLAY2", "配置保留选择的显示器");
   Check(parsed->presentation.autoHideAtEdge, "保留贴边自动隐藏");
   Check(!parsed->presentation.flushWithEdge, "保留悬浮间距设置");
+  Check(parsed->presentation.barLengthDip == 1040, "保留自定义长条长度");
+  Check(parsed->presentation.barBackground == "2B4C7E", "保留自定义长条背景色");
+  Check(parsed->presentation.timelineSnapMinutes == 1, "保留时间轴步进");
 
   config.presentation.edge = classtime::PresentationSettings::Edge::Left;
   const auto leftConfig = classtime::ParseConfig(classtime::SerializeConfig(config), &error);
@@ -294,6 +301,16 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   const auto legacy = classtime::ParseConfig(withTemplate + R"({"view":"screen_edge"}})", &error);
   Check(legacy && legacy->presentation.screenEdgeThickness == 10, "旧配置默认使用加粗边框");
   Check(legacy && legacy->presentation.flushWithEdge, "旧配置默认紧贴边缘");
+  Check(legacy && legacy->presentation.barLengthDip == 0 &&
+            legacy->presentation.EffectiveBarLength() == 680,
+        "旧配置保持横向长条默认长度 680");
+  if (legacy) {
+    auto side = legacy->presentation;
+    side.edge = classtime::PresentationSettings::Edge::Left;
+    Check(side.EffectiveBarLength() == 420, "旧配置保持竖向长条默认长度 420");
+  }
+  Check(legacy && legacy->presentation.timelineSnapMinutes == 5, "旧配置默认 5 分钟拖动步进");
+  Check(legacy && legacy->presentation.barBackground.empty(), "旧配置默认跟随系统背景色");
   const auto oversized =
       classtime::ParseConfig(withTemplate + R"({"screenEdgeThickness":100}})", &error);
   Check(oversized && oversized->presentation.screenEdgeThickness == 24, "边框粗细限制在滑块范围内");
@@ -301,6 +318,19 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
       classtime::ParseConfig(withTemplate + R"({"edge":"diagonal"}})", &error);
   Check(unknownEdge && unknownEdge->presentation.edge == classtime::PresentationSettings::Edge::Bottom,
         "未知贴边位置回退到底部");
+  const auto tooLong = classtime::ParseConfig(withTemplate + R"({"barLengthDip":99999}})", &error);
+  Check(tooLong && tooLong->presentation.barLengthDip == 1600, "长条长度上限 1600");
+  const auto tooShort = classtime::ParseConfig(withTemplate + R"({"barLengthDip":30}})", &error);
+  Check(tooShort && tooShort->presentation.barLengthDip == 240, "长条长度下限 240");
+  const auto badColor =
+      classtime::ParseConfig(withTemplate + R"({"barBackground":"XYZ123"}})", &error);
+  Check(badColor && badColor->presentation.barBackground.empty(), "非法背景色回退跟随系统");
+  const auto longColor =
+      classtime::ParseConfig(withTemplate + R"({"barBackground":"#A1B2C3"}})", &error);
+  Check(longColor && longColor->presentation.barBackground.empty(), "带井号的颜色视为非法");
+  const auto invalidSnap =
+      classtime::ParseConfig(withTemplate + R"({"timelineSnapMinutes":2}})", &error);
+  Check(invalidSnap && invalidSnap->presentation.timelineSnapMinutes == 5, "非法步进回退默认值");
 
   bool fromOverride = false;
   const auto effective = classtime::EffectiveSegments(*parsed, now, &fromOverride);
@@ -417,6 +447,24 @@ void TestJson() {
   Check(classtime::json::WideToUtf8(L"中文") == "中文", "宽字符转 UTF-8");
 }
 
+void TestTimelineDrag() {
+  using ClassTimeApp::DraggedTimelineRange;
+  using ClassTimeApp::TimelineDragMode;
+  const ClassTimeApp::TimelineRange original{8 * 60 + 2, 8 * 60 + 47};
+  const auto untouched = DraggedTimelineRange(original, TimelineDragMode::ResizeEnd, 0, 5);
+  Check(untouched.start == 482 && untouched.end == 527, "拖动未移动时不舍入原始分钟");
+  const auto resized = DraggedTimelineRange(original, TimelineDragMode::ResizeEnd, 5, 5);
+  Check(resized.start == 482 && resized.end == 532, "调整结束时保留原分钟偏移");
+  const auto moved = DraggedTimelineRange(original, TimelineDragMode::Move, -5, 5);
+  Check(moved.start == 477 && moved.end == 522, "移动保留时长和分钟精度");
+  const auto precise = DraggedTimelineRange(original, TimelineDragMode::ResizeStart, 1, 1);
+  Check(precise.start == 483 && precise.end == 527, "1 分钟步进支持精确调整");
+  const auto shortest = DraggedTimelineRange({10, 11}, TimelineDragMode::ResizeStart, 5, 5);
+  Check(shortest.start == 10 && shortest.end == 11, "短时段不会被自动扩展到 5 分钟");
+  const auto upper = DraggedTimelineRange({1400, 1438}, TimelineDragMode::Move, 15, 15);
+  Check(upper.start == 1401 && upper.end == 1439, "整体拖动受当天结束边界约束");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -436,6 +484,7 @@ int main(int argc, char** argv) {
   }
   TestConfigRoundtrip(highSchool, university);
   TestConfigVersions(highSchool);
+  TestTimelineDrag();
 
   std::printf("\n%d 项检查，%d 项失败\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;

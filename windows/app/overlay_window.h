@@ -58,6 +58,8 @@ class OverlayWindow {
   void UpdateVisibleLayer();
   void RefreshEdgeHandle();
   void RefreshBar();
+  // 长条表面：自定义背景色优先，否则跟随系统背景色。值未变化时不动画刷。
+  void ApplyBarSurface();
   void RefreshRing();
   void RefreshScreenEdge();
   void HideScreenEdge();
@@ -127,6 +129,10 @@ class OverlayWindow {
   std::string monitorId_;
   int offsetX_ = 0;
   int offsetY_ = 12;
+  // 分节长条整体长度与背景色（来自 presentation；背景为空时跟随系统）。
+  int barLengthDip_ = classtime::PresentationSettings::kDefaultBarLength;
+  std::string barBackgroundHex_;
+  std::string barSurfaceSignature_;
   classtime::PresentationSettings::Edge edge_ = classtime::PresentationSettings::Edge::Bottom;
   double dpiScale_ = 1.0;
   int windowWidth_ = 0;
