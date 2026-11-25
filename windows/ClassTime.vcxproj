@@ -129,6 +129,7 @@
     <ClInclude Include="app\ui_motion.h" />
     <ClInclude Include="app\widget_appearance.h" />
     <ClInclude Include="app\timeline_edit.h" />
+    <ClInclude Include="app\widget_state.h" />
     <ClInclude Include="engine\include\classtime\config.h" />
     <ClInclude Include="engine\include\classtime\edit_ops.h" />
     <ClInclude Include="engine\include\classtime\json.h" />

@@ -146,7 +146,7 @@ void DesktopApp::ApplyState(bool presentationOnly) {
 }
 
 void DesktopApp::ShowSettings() {
-  if (!settings_) settings_ = std::make_unique<SettingsWindow>();
+  if (!settings_) settings_ = std::make_unique<SettingsWindow>([this] { ExitApplication(); });
   settings_->Show();
 }
 

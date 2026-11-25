@@ -1,6 +1,8 @@
 // 设置窗口：纯 C++/WinUI 3 构建界面，不依赖 XAML 代码生成。
 #pragma once
 
+#include <functional>
+
 #include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 
@@ -10,7 +12,7 @@ namespace ClassTimeApp {
 
 class SettingsWindow {
  public:
-  SettingsWindow();
+  explicit SettingsWindow(std::function<void()> exitRequested);
   ~SettingsWindow();
 
   void Show();
@@ -49,6 +51,8 @@ class SettingsWindow {
   void RefreshDisplayControls();
   void RefreshDisplayMonitors();
   void RefreshDisplayPreview(const classtime::PresentationSettings& presentation);
+  void StartPreviewRefresh();
+  void StopPreviewRefresh();
   void ApplyDisplayPanelVisibility(bool screenEdge, bool animate);
   void CommitScreenEdgeThickness();
   // 长条长度/背景色：拖动期间只更新预览，停顿后合并保存。
@@ -86,7 +90,7 @@ class SettingsWindow {
   void ConfirmEditorDelete();
   void PerformEditorDelete();
 
-  // 与时间引擎同源的摘要数据（不另起计时器）。
+  // 摘要取有效作息，显示页可见时刷新实时预览。
   void RefreshTodayOverview();
   void RefreshPreviewSummary();
 
@@ -139,6 +143,7 @@ class SettingsWindow {
   bool editorOpen_ = false;
   bool newSegment_ = false;
   bool allowClose_ = false;
+  std::function<void()> exitRequested_;
   std::string editingId_;
 
   winrt::Microsoft::UI::Xaml::Controls::NavigationView nav_{nullptr};
@@ -166,12 +171,15 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::TextBlock monitorHint_{nullptr};
   std::wstring monitorListSignature_;
   winrt::Microsoft::UI::Xaml::Controls::Canvas displayPreview_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Canvas previewDetail_{nullptr};
   // 预览分三层：静态模拟屏幕 + 两层交替承载控件外观，切换形式时交叉淡入淡出。
   winrt::Microsoft::UI::Xaml::Controls::Canvas previewChrome_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Canvas previewStageA_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Canvas previewStageB_{nullptr};
   int previewStage_ = 0;
   bool previewDrawn_ = false;
+  std::string previewStateSignature_;
+  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer previewRefreshTimer_{nullptr};
   struct PreviewAppearance {
     classtime::PresentationSettings presentation;
     bool expanded = false;

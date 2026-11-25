@@ -3,6 +3,7 @@
 #include "services.h"
 #include "ui_motion.h"
 #include "widget_appearance.h"
+#include "widget_state.h"
 
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Interop.h>
@@ -40,45 +41,10 @@ constexpr double kHandleHeightDip = 12;
 constexpr double kHandleTrackLengthDip = 64;
 constexpr double kHandleTrackThicknessDip = 4;
 
-struct Palette {
-  Windows::UI::Color background;
-  Windows::UI::Color foreground;
-  Windows::UI::Color accent;
-  Windows::UI::Color rest;
-  Windows::UI::Color lunch;
-};
-
-Windows::UI::Color WithAlpha(Windows::UI::Color color, uint8_t alpha) {
-  color.A = alpha;
-  return color;
-}
-
-Palette CurrentPalette() {
-  Palette palette;
-  try {
-    UISettings settings;
-    palette.background = settings.GetColorValue(UIColorType::Background);
-    palette.foreground = settings.GetColorValue(UIColorType::Foreground);
-    palette.accent = settings.GetColorValue(UIColorType::Accent);
-  } catch (...) {
-    palette.background = Windows::UI::ColorHelper::FromArgb(255, 250, 250, 252);
-    palette.foreground = Windows::UI::ColorHelper::FromArgb(255, 28, 30, 36);
-    palette.accent = Windows::UI::ColorHelper::FromArgb(255, 79, 107, 237);
-  }
-  palette.rest = Windows::UI::ColorHelper::FromArgb(255, 63, 167, 150);
-  palette.lunch = Windows::UI::ColorHelper::FromArgb(255, 224, 164, 88);
-  return palette;
-}
-
-Windows::UI::Color KindColor(const Palette& palette, classtime::SegmentKind kind) {
-  switch (kind) {
-    case classtime::SegmentKind::Focus: return palette.accent;
-    case classtime::SegmentKind::Break: return palette.rest;
-    case classtime::SegmentKind::LongBreak: return palette.rest;
-    case classtime::SegmentKind::Lunch: return palette.lunch;
-  }
-  return palette.accent;
-}
+using WidgetAppearance::CurrentPalette;
+using WidgetAppearance::KindColor;
+using WidgetAppearance::Palette;
+using WidgetAppearance::WithAlpha;
 
 bool IsSideEdge(classtime::PresentationSettings::Edge edge) {
   return edge == classtime::PresentationSettings::Edge::Left ||
@@ -1651,8 +1617,10 @@ void OverlayWindow::RenderStrips(int alpha) {
 
 void OverlayWindow::RefreshBar() {
   const auto& services = Services::Instance();
-  const auto& snapshot = services.snapshot();
   const auto now = NowClock();
+  const auto plan = services.PlanFor(now);
+  const auto state = BuildWidgetState(plan.segments, now, services.config().presentation.scope);
+  const auto& snapshot = state.snapshot;
   Palette palette = CurrentPalette();
   if (!barBackgroundHex_.empty()) {
     const auto background = WidgetAppearance::ParseHexColor(barBackgroundHex_);
@@ -1668,7 +1636,7 @@ void OverlayWindow::RefreshBar() {
   const int clientWidth = client.right - client.left;
   const int clientHeight = client.bottom - client.top;
   const bool vertical = IsSideEdge(edge_);
-  const auto visible = services.VisibleSegments();
+  const auto& visible = state.visibleSegments;
   std::string signature = std::string(vertical ? "v:" : "h:") + std::to_string(clientWidth) +
                           ":" + std::to_string(clientHeight) + ":" + std::to_string(dpiScale_) +
                           ":bg:" + barBackgroundHex_;
@@ -1767,13 +1735,7 @@ void OverlayWindow::RefreshBar() {
   // 更新填充长度，悬停卡独立更新。
   for (size_t i = 0; i < visuals_.size() && i < visible.size(); ++i) {
     const auto& segment = visible[i];
-    double progress = 0.0;
-    if (snapshot.current.has_value() && snapshot.current->id == segment.id) {
-      progress = snapshot.progress;
-    } else if (segment.end.TotalMinutes() * 60 <=
-               now.hour * 3600 + now.minute * 60 + now.second) {
-      progress = 1.0;
-    }
+    const double progress = WidgetSegmentProgress(segment, now, snapshot);
     const auto& visual = visuals_[i];
     const double filled = visual.length * progress;
     const double radius = std::min(filled, visual.thickness) / 2;

@@ -13,6 +13,7 @@
 #include "classtime/schedule.h"
 #include "classtime/time_engine.h"
 #include "../app/timeline_edit.h"
+#include "../app/widget_state.h"
 
 namespace {
 
@@ -465,6 +466,30 @@ void TestTimelineDrag() {
   Check(upper.start == 1401 && upper.end == 1439, "整体拖动受当天结束边界约束");
 }
 
+void TestWidgetState(const classtime::Schedule& highSchool) {
+  using Scope = classtime::PresentationSettings::Scope;
+  const auto start = Clock("2026-11-23T08:00:00");
+  const auto later = Clock("2026-11-23T08:15:00");
+  const auto atStart = ClassTimeApp::BuildWidgetState(highSchool.segments, start, Scope::AllDay);
+  const auto atLater = ClassTimeApp::BuildWidgetState(highSchool.segments, later, Scope::AllDay);
+  Check(atLater.visibleSegments.size() == highSchool.segments.size(), "预览全天显示实际时段");
+  Check(atLater.snapshot.current && atLater.snapshot.current->id == "h1", "预览使用当前实际时段");
+  Check(NearlyEqual(ClassTimeApp::WidgetSegmentProgress(atStart.visibleSegments.front(), start,
+                                                         atStart.snapshot), 0.0, 0.0001) &&
+            NearlyEqual(ClassTimeApp::WidgetSegmentProgress(atLater.visibleSegments.front(), later,
+                                                             atLater.snapshot), 1.0 / 3.0, 0.0001),
+        "组件与预览按当前时钟更新同一时段进度");
+  Check(atLater.edgeProgress > atStart.edgeProgress, "全天边框随当前时钟推进");
+  const auto lunch = Clock("2026-11-23T12:30:00");
+  const auto block = ClassTimeApp::BuildWidgetState(highSchool.segments, lunch, Scope::CurrentBlock);
+  Check(!block.visibleSegments.empty() && block.visibleSegments.front().id == "h5",
+        "当前时段预览使用与组件相同的分块");
+  Check(block.focusCompleted == 4 && block.focusTotal == 6, "圆环统计来自实际作息");
+  const auto empty = ClassTimeApp::BuildWidgetState({}, later, Scope::AllDay);
+  Check(empty.visibleSegments.empty() && !empty.snapshot.hasSchedule && empty.edgeProgress == 0,
+        "空计划预览没有虚构课程或进度");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -481,6 +506,7 @@ int main(int argc, char** argv) {
     TestScope(highSchool);
     TestBoundariesAndDedupe(highSchool);
     TestEditOperations(highSchool);
+    TestWidgetState(highSchool);
   }
   TestConfigRoundtrip(highSchool, university);
   TestConfigVersions(highSchool);
