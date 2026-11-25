@@ -29,6 +29,52 @@ using Presentation = classtime::PresentationSettings;
 constexpr double kPreviewWidth = 420;
 constexpr double kPreviewHeight = 172;
 
+struct MonitorChoice {
+  std::wstring device;
+  std::wstring label;
+  bool primary = false;
+  RECT bounds{};
+};
+
+std::vector<MonitorChoice> EnumerateMonitors() {
+  std::vector<MonitorChoice> monitors;
+  EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR monitor, HDC, LPRECT, LPARAM data) -> BOOL {
+    auto& result = *reinterpret_cast<std::vector<MonitorChoice>*>(data);
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(monitor, &info)) return TRUE;
+
+    MonitorChoice choice;
+    choice.device = info.szDevice;
+    choice.primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
+    choice.bounds = info.rcMonitor;
+    const auto slash = choice.device.find_last_of(L'\\');
+    const auto shortName = slash == std::wstring::npos ? choice.device : choice.device.substr(slash + 1);
+    const auto width = info.rcMonitor.right - info.rcMonitor.left;
+    const auto height = info.rcMonitor.bottom - info.rcMonitor.top;
+    choice.label = L"显示器 " + shortName;
+    if (choice.primary) choice.label += L"（系统主屏）";
+    choice.label += L" · " + std::to_wstring(width) + L" × " + std::to_wstring(height);
+    result.push_back(std::move(choice));
+    return TRUE;
+  }, reinterpret_cast<LPARAM>(&monitors));
+  std::stable_sort(monitors.begin(), monitors.end(), [](const MonitorChoice& a, const MonitorChoice& b) {
+    return a.primary != b.primary ? a.primary : a.device < b.device;
+  });
+  const auto primary = std::find_if(monitors.begin(), monitors.end(),
+                                    [](const MonitorChoice& monitor) { return monitor.primary; });
+  if (primary != monitors.end()) {
+    for (auto& monitor : monitors) {
+      if (monitor.primary) continue;
+      if (monitor.bounds.right <= primary->bounds.left) monitor.label += L" · 主屏左侧";
+      else if (monitor.bounds.left >= primary->bounds.right) monitor.label += L" · 主屏右侧";
+      else if (monitor.bounds.bottom <= primary->bounds.top) monitor.label += L" · 主屏上方";
+      else if (monitor.bounds.top >= primary->bounds.bottom) monitor.label += L" · 主屏下方";
+    }
+  }
+  return monitors;
+}
+
 Style ResourceStyle(const wchar_t* key) {
   try {
     return Application::Current().Resources().Lookup(box_value(key)).try_as<Style>();
@@ -606,6 +652,14 @@ void SettingsWindow::Build() {
       Services::Instance().UpdatePresentation(presentation);
     }));
 
+    monitorCombo_ = ComboBox();
+    monitorCombo_.Header(box_value(L"组件所在显示器"));
+    monitorCombo_.HorizontalAlignment(HorizontalAlignment::Stretch);
+    Automation::AutomationProperties::SetName(monitorCombo_, L"组件所在显示器");
+    Add(stack, monitorCombo_);
+    monitorHint_ = MakeSubtitle(L"");
+    Add(stack, monitorHint_);
+
     screenEdgeControls_ = StackPanel();
     screenEdgeControls_.Spacing(4);
     auto thicknessRow = Grid();
@@ -1097,6 +1151,19 @@ void SettingsWindow::Build() {
   planScope_.SelectionChanged([this](auto const&, auto const&) {
     if (!syncing_) RefreshSegments();
   });
+  monitorCombo_.GotFocus([this](auto const&, auto const&) { RefreshDisplayMonitors(); });
+  monitorCombo_.SelectionChanged([this](auto const&, auto const&) {
+    if (syncing_) return;
+    const auto item = monitorCombo_.SelectedItem().try_as<ComboBoxItem>();
+    if (!item) return;
+    const auto device = monitorCombo_.SelectedIndex() == 0
+                            ? std::string{}
+                            : ToUtf8(std::wstring(unbox_value<hstring>(item.Tag()).c_str()));
+    auto presentation = Services::Instance().config().presentation;
+    if (presentation.monitorId == device) return;
+    presentation.monitorId = device;
+    Services::Instance().UpdatePresentation(presentation);
+  });
   screenEdgeSlider_.ValueChanged([this](auto const&, auto const& args) {
     if (syncing_) return;
     pendingThickness_ = static_cast<int>(std::lround(args.NewValue()));
@@ -1583,6 +1650,7 @@ void SettingsWindow::RefreshDisplayControls() {
                         : presentation.edge == Presentation::Edge::Left ? 2
                                                                         : 3;
   SelectSegment(edgeSegments_, edgeIndex);
+  RefreshDisplayMonitors();
   ApplyDisplayPanelVisibility(screenEdge, true);
   screenEdgeSlider_.Value(pendingThickness_.value_or(presentation.screenEdgeThickness));
   visibleToggle_.IsOn(presentation.visible);
@@ -1590,6 +1658,55 @@ void SettingsWindow::RefreshDisplayControls() {
   flushToggle_.IsOn(presentation.flushWithEdge);
   RefreshDisplayPreview(presentation);
   RefreshPreviewSummary();
+}
+
+void SettingsWindow::RefreshDisplayMonitors() {
+  // 不在下拉列表打开时重建 Items：选择事件还在使用这些项目。
+  if (!monitorCombo_ || monitorCombo_.IsDropDownOpen()) return;
+  const bool wasSyncing = std::exchange(syncing_, true);
+  const auto selectedDevice = Services::Instance().config().presentation.monitorId;
+  const auto monitors = EnumerateMonitors();
+  std::wstring signature = L"follow-primary\n";
+  int selected = selectedDevice.empty() ? 0 : -1;
+  for (size_t index = 0; index < monitors.size(); ++index) {
+    const auto& monitor = monitors[index];
+    signature += monitor.device + L"\n" + monitor.label + L"\n";
+    if (ToUtf8(monitor.device) == selectedDevice) {
+      selected = static_cast<int>(index) + 1;
+    }
+  }
+  if (selected < 0) {
+    signature += L"unavailable\n" + ToWide(selectedDevice);
+    selected = static_cast<int>(monitors.size()) + 1;
+    monitorHint_.Text(L"该显示器不可用，组件定位时会回退到系统主屏。");
+  } else {
+    monitorHint_.Text(L"只改变组件所在位置，不更改 Windows 的主显示器。");
+  }
+
+  // 普通设置变更只同步选中项，不替换仍被 WinUI 引用的下拉项目。
+  if (monitorListSignature_ != signature) {
+    monitorCombo_.Items().Clear();
+    ComboBoxItem primary;
+    primary.Content(box_value(L"跟随系统主显示器"));
+    primary.Tag(box_value(hstring(L"")));
+    monitorCombo_.Items().Append(primary);
+    for (const auto& monitor : monitors) {
+      ComboBoxItem item;
+      item.Content(box_value(hstring(monitor.label)));
+      item.Tag(box_value(hstring(monitor.device)));
+      monitorCombo_.Items().Append(item);
+    }
+    if (selected > static_cast<int>(monitors.size())) {
+      ComboBoxItem unavailable;
+      unavailable.Content(box_value(L"上次选择的显示器不可用"));
+      unavailable.Tag(box_value(hstring(ToWide(selectedDevice))));
+      unavailable.IsEnabled(false);
+      monitorCombo_.Items().Append(unavailable);
+    }
+    monitorListSignature_ = std::move(signature);
+  }
+  if (monitorCombo_.SelectedIndex() != selected) monitorCombo_.SelectedIndex(selected);
+  syncing_ = wasSyncing;
 }
 
 void SettingsWindow::ApplyDisplayPanelVisibility(bool screenEdge, bool animate) {
@@ -1703,7 +1820,7 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& presentation) {
   const auto track = color(82, 101, 123);
   const auto face = color(242, 247, 253);
   const auto ink = color(30, 50, 72);
-  const auto accentSurface = WidgetAppearance::Surface(face.Color(), accent.Color());
+  const auto accentSurface = WidgetAppearance::Surface(face.Color());
   const auto place = [&](const UIElement& item, double x, double y) {
     Canvas::SetLeft(item, x);
     Canvas::SetTop(item, y);

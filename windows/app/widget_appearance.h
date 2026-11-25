@@ -17,28 +17,6 @@ inline CornerRadius DockCorners(double radius, Edge edge, bool flush, double edg
   }
 }
 
-inline Brush Surface(Color background, Color accent) {
-  HIGHCONTRASTW contrast{sizeof(contrast)};
-  if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
-      (contrast.dwFlags & HCF_HIGHCONTRASTON)) {
-    return SolidColorBrush(background);
-  }
-  const auto blend = [](uint8_t base, uint8_t tint) {
-    return static_cast<uint8_t>(std::lround(base + (tint - base) * 0.10));
-  };
-  const Color tinted{255, blend(background.R, accent.R), blend(background.G, accent.G),
-                     blend(background.B, accent.B)};
-  LinearGradientBrush surface;
-  surface.StartPoint({0, 0});
-  surface.EndPoint({1, 1});
-  GradientStop start;
-  start.Color(background);
-  GradientStop end;
-  end.Offset(1);
-  end.Color(tinted);
-  surface.GradientStops().Append(start);
-  surface.GradientStops().Append(end);
-  return surface;
-}
+inline Brush Surface(Color background) { return SolidColorBrush(background); }
 
 }  // namespace ClassTimeApp::WidgetAppearance

@@ -14,7 +14,8 @@ class Services {
  public:
   static Services& Instance();
 
-  void Initialize();
+  // 无法安全读取、备份或保存配置时返回 false，保留原文件或备份。
+  bool Initialize();
   bool initialized() const { return initialized_; }
 
   // —— 只读状态 ——
@@ -86,7 +87,7 @@ class Services {
 
   void LoadOrCreate();
   void LoadPresets(std::vector<classtime::Schedule>* out);
-  void PersistConfig();
+  bool PersistConfig();
   void PersistRuntime();
   void RecomputeLocked();
 

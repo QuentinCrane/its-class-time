@@ -253,6 +253,7 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   config.presentation.view = classtime::PresentationSettings::View::Ring;
   config.presentation.scope = classtime::PresentationSettings::Scope::CurrentBlock;
   config.presentation.edge = classtime::PresentationSettings::Edge::Top;
+  config.presentation.monitorId = "\\\\.\\DISPLAY2";
   config.presentation.autoHideAtEdge = true;
   config.presentation.flushWithEdge = false;
   config.notifications.muted = true;
@@ -271,6 +272,7 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   Check(parsed->selectedTemplateId == "university", "配置保留选中模板");
   Check(parsed->presentation.view == classtime::PresentationSettings::View::Ring, "保留圆环视图");
   Check(parsed->presentation.edge == classtime::PresentationSettings::Edge::Top, "保留顶部贴边");
+  Check(parsed->presentation.monitorId == "\\\\.\\DISPLAY2", "配置保留选择的显示器");
   Check(parsed->presentation.autoHideAtEdge, "保留贴边自动隐藏");
   Check(!parsed->presentation.flushWithEdge, "保留悬浮间距设置");
 
@@ -317,6 +319,24 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
 
   classtime::PruneOverrides(config, "2026-11-24");
   Check(config.dailyOverrides.empty(), "过期覆盖会被清理");
+}
+
+void TestConfigVersions(const classtime::Schedule& highSchool) {
+  const std::string templateField =
+      "\"templates\":[" + classtime::SerializeSchedule(highSchool, 0) + "]";
+  std::string error;
+
+  const auto current = classtime::ParseConfig("{\"schemaVersion\":1," + templateField + "}", &error);
+  Check(current && current->schemaVersion == 1, "当前版本配置可以读取");
+
+  const auto legacy = classtime::ParseConfig("{" + templateField + "}", &error);
+  Check(legacy && legacy->schemaVersion == 1, "缺少版本号的旧配置仍按版本 1 读取");
+
+  for (const auto& version : {"2", "0", "-1", "1.5", "\"1\"", "null", "true"}) {
+    const auto parsed = classtime::ParseConfig(
+        "{\"schemaVersion\":" + std::string(version) + "," + templateField + "}", &error);
+    Check(!parsed && !error.empty(), std::string("拒绝不兼容的配置版本 ") + version);
+  }
 }
 
 void TestEditOperations(const classtime::Schedule& highSchool) {
@@ -415,6 +435,7 @@ int main(int argc, char** argv) {
     TestEditOperations(highSchool);
   }
   TestConfigRoundtrip(highSchool, university);
+  TestConfigVersions(highSchool);
 
   std::printf("\n%d 项检查，%d 项失败\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;

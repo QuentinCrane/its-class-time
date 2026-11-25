@@ -181,7 +181,12 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
 
   AppConfig config;
   if (const json::Value* version = root.Find("schemaVersion")) {
-    config.schemaVersion = version->AsInt(1);
+    // 没有版本号的早期配置按版本 1 兼容；显式版本必须准确匹配。
+    // 不能把字符串、null 或小数回退/截断为 1，否则重写配置时会丢失未知字段。
+    if (!version->IsNumber() || version->AsNumber() != 1.0) {
+      if (error) *error = "不支持的配置 schemaVersion";
+      return std::nullopt;
+    }
   }
   if (const json::Value* revision = root.Find("revision")) {
     config.revision = std::max(1, revision->AsInt(1));

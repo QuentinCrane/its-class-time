@@ -288,7 +288,7 @@ void OverlayWindow::CreateNativeWindow() {
   BuildDetailCard();
   const auto palette = CurrentPalette();
   edgeHandle_ = Border();
-  edgeHandle_.Background(WidgetAppearance::Surface(palette.background, palette.accent));
+  edgeHandle_.Background(WidgetAppearance::Surface(palette.background));
   edgeHandle_.CornerRadius({6, 6, 6, 6});
   edgeHandle_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 28)));
   edgeHandle_.BorderThickness(kSurfaceBorder);
@@ -338,7 +338,7 @@ void OverlayWindow::BuildBar() {
 
   barRoot_ = Border();
   barRoot_.CornerRadius(WidgetAppearance::DockCorners(16, edge_, flushWithEdge_));
-  barRoot_.Background(WidgetAppearance::Surface(palette.background, palette.accent));
+  barRoot_.Background(WidgetAppearance::Surface(palette.background));
   barRoot_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 26)));
   barRoot_.BorderThickness(kSurfaceBorder);
   barRoot_.Padding(Thickness{kBarInsetDip, 0, kBarInsetDip, 0});
@@ -355,7 +355,7 @@ void OverlayWindow::BuildRing() {
   auto dial = Canvas();
   dial.Width(kRingDiameterDip);
   dial.Height(kRingDiameterDip);
-  dial.Background(WidgetAppearance::Surface(palette.background, palette.accent));
+  dial.Background(WidgetAppearance::Surface(palette.background));
 
   Shapes::Ellipse bezel;
   bezel.Width(kRingDiameterDip - 7);
@@ -430,7 +430,7 @@ void OverlayWindow::BuildDetailCard() {
   detailCard_ = Border();
   detailCard_.Width(kDetailWidth);
   detailCard_.Padding(Thickness{14, 12, 14, 12});
-  detailCard_.Background(WidgetAppearance::Surface(palette.background, palette.accent));
+  detailCard_.Background(WidgetAppearance::Surface(palette.background));
   detailCard_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 30)));
   detailCard_.BorderThickness(Thickness{1, 1, 1, 1});
   detailCard_.CornerRadius(CornerRadius{19, 19, 19, 19});
@@ -1466,6 +1466,21 @@ void OverlayWindow::Close() {
 
 void OverlayWindow::ApplyState() {
   if (window_ == nullptr || hwnd_ == nullptr || morphOutgoing_ != Layer::None) return;
+  // 复用可见浮窗原有的绘制刷新，显示器拔插或主屏变化后重新落到目标工作区。
+  // 拖动和位置动画期间不干预，提醒调度仍独立于此处。
+  if (visible_ && view_ != View::ScreenEdge && !dragPointer_ && !dragging_ &&
+      !snapFrame_.value && !windowMotionFrame_.value && !edgeMotion_ && !edgeClosing_) {
+    const HMONITOR target = FindMonitor(monitorId_);
+    MONITORINFO info{sizeof(info)};
+    RECT bounds{};
+    RECT intersection{};
+    if (target && GetMonitorInfoW(target, &info) && GetWindowRect(hwnd_, &bounds) &&
+        (MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) != target ||
+         !IntersectRect(&intersection, &bounds, &info.rcWork))) {
+      HideDetail();
+      LayoutWindow();
+    }
+  }
   if (edgeCollapsed_ && view_ != View::ScreenEdge) {
     RefreshEdgeHandle();
     return;

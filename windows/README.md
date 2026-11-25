@@ -7,7 +7,7 @@
 
 | 部分 | 状态 | 说明 |
 |---|---|---|
-| 作息引擎 `engine/` | **已编译并测试** | 纯 C++17，无 WinRT 依赖；`engine_tests` 134 项检查全部通过（含 `shared/test-cases` 与配置往返，0 失败） |
+| 作息引擎 `engine/` | **已编译并测试** | 纯 C++17，无 WinRT 依赖；`engine_tests` 144 项检查全部通过（含 `shared/test-cases` 与配置兼容性，0 失败） |
 | 配置/今日覆盖/去重 | **已编译并测试** | JSON 往返、原子写入、失效覆盖清理、事件键去重 |
 | 悬浮层 `app/overlay_window.*` | **源码通过 + 实机渲染验证** | 分节长条/圆环/屏幕边框在解包模式实机渲染成功（截图核对）；四边吸附、左右竖向排列与状态配色为 2026-11-22 新增，待实机核对 |
 | 设置窗口 `app/settings_window.*` | **实机渲染验证** | 纯代码构建 UI；NavigationView、模板选择、星期勾选、时段列表、编辑浮层全部正常显示 |
@@ -118,7 +118,9 @@ MSIX 打包与 `module.g.cpp` 相关目标的差异。
 首次启动会：从包内 `presets/*.json` 读取高中/大学示例；将用户模板写入数据目录
 `config.json`（打包时为 `%LOCALAPPDATA%\Packages\<包族名>\LocalState`，解包时
 为 `%LOCALAPPDATA%\ClassTime`，可用 `CLASSTIME_DATA_DIR` 覆盖）；注册通知与
-托盘图标，显示悬浮层。配置损坏时备份为 `config.corrupt-<时间>.json` 并回退预设。
+托盘图标，显示悬浮层。配置损坏或版本不受支持时，先将原文件备份为
+`config.json.corrupt-<时间>`，再回退预设；同一秒已有备份时会另取文件名。
+如果无法安全读取、备份或写入配置，应用提示并停止启动，保留原文件或已创建的备份。
 
 ## 5. 目录
 
@@ -161,6 +163,7 @@ windows\build\engine\engine_tests.exe "E:\path\to\repo"
 - **通知**：`BoundaryMonitor` 只按最近边界唤醒；到点后以真实时钟复核，30 秒容差外跳过；`NotificationService` 合并同一秒事件。
 - **暂停**：只置 `notifications.muted`，进度与边界判断继续。
 - **悬浮窗**：`OverlappedPresenter` 去边框、`SetWindowPos(HWND_TOPMOST)`、`WS_EX_NOACTIVATE`；四边吸附，左右贴边切换为竖向分节。默认 `flushWithEdge=true`，贴边时 0 间距、靠边圆角削平并关闭 DWM 外框，可直接落在任务栏上沿；关闭后恢复 12 DIP 悬浮间距。不承诺覆盖独占全屏。
+- **多显示器**：在「显示与位置」选择指定显示器或跟随系统主显示器；只改变组件所在位置，不更改系统主屏。已保存的显示器不可用时，组件定位回退到系统主屏。
 - **单实例**：`AppInstance::FindOrRegisterForKey("ClassTime")`。
 - **开机启动**：清单中的 `ClassTimeStartup` 启动任务，默认关闭，由用户在设置页开启。
 
@@ -174,7 +177,8 @@ windows\build\engine\engine_tests.exe "E:\path\to\repo"
 6. 今日覆盖后切换模板：明天恢复常规模板，今日仍按覆盖（T07/T08）。
 7. 睡眠 2 小时唤醒：只显示当前状态，不连弹旧通知（T19）。
 8. 启动第二个实例：不产生第二套计时/通知（T23）。
-9. 手工破坏 `config.json`：应备份并安全启动（T24）。
+9. 在隔离数据目录中构造损坏的 `config.json`：启动后应保留备份并恢复预设（T24）；
+   文件被独占或只读导致无法安全恢复时，应提示并停止启动。
 10. 通知权限被关闭：悬浮层正常工作，设置页显示权限状态（T21）。
 
 ## 8. 已知限制 / 后续

@@ -21,6 +21,7 @@ class SettingsWindow {
   void RefreshSegments();
   void RefreshTimetable(const std::vector<classtime::Segment>& segments, bool permanent);
   void RefreshDisplayControls();
+  void RefreshDisplayMonitors();
   void RefreshDisplayPreview(const classtime::PresentationSettings& presentation);
   void ApplyDisplayPanelVisibility(bool screenEdge, bool animate);
   void CommitScreenEdgeThickness();
@@ -120,6 +121,9 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::Grid viewSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid scopeSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid edgeSegments_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ComboBox monitorCombo_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock monitorHint_{nullptr};
+  std::wstring monitorListSignature_;
   winrt::Microsoft::UI::Xaml::Controls::Canvas displayPreview_{nullptr};
   // 预览分三层：静态模拟屏幕 + 两层交替承载控件外观，切换形式时交叉淡入淡出。
   winrt::Microsoft::UI::Xaml::Controls::Canvas previewChrome_{nullptr};

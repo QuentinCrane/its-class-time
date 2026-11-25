@@ -66,7 +66,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
       Log("skip resources");
 
       auto& services = ClassTimeApp::Services::Instance();
-      services.Initialize();
+      if (!services.Initialize()) {
+        const std::wstring message =
+            L"无法安全读取、备份或写入配置，预览已停止启动。\n"
+            L"原有配置或已创建的备份已保留。\n"
+            L"请检查该文件及其文件夹的访问权限，然后重试。\n\n" +
+            services.configPath().wstring();
+        MessageBoxW(nullptr, message.c_str(), L"ClassTime 预览", MB_OK | MB_ICONERROR);
+        Application::Current().Exit();
+        return;
+      }
       Log("services ok");
 
       wchar_t demo[8]{};

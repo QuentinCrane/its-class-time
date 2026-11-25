@@ -73,7 +73,16 @@ void DesktopApp::Initialize() {
   }
 
   auto& services = Services::Instance();
-  services.Initialize();
+  if (!services.Initialize()) {
+    const std::wstring message =
+        L"无法安全读取、备份或写入配置，应用已停止启动。\n"
+        L"原有配置或已创建的备份已保留。\n"
+        L"请检查该文件及其文件夹的访问权限，然后重试。\n\n" +
+        services.configPath().wstring();
+    MessageBoxW(nullptr, message.c_str(), L"“上课”时间到！", MB_OK | MB_ICONERROR);
+    Application::Current().Exit();
+    return;
+  }
 
   notifications_ = std::make_unique<NotificationService>();
   notifications_->Register([this] {

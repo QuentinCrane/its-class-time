@@ -3,6 +3,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <system_error>
 
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.ApplicationModel.h>
@@ -37,15 +38,23 @@ bool WriteAtomic(const std::filesystem::path& path, const std::string& content) 
                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
 }
 
-void BackupCorrupt(const std::filesystem::path& path) {
+bool BackupCorrupt(const std::filesystem::path& path) {
   SYSTEMTIME now{};
   GetLocalTime(&now);
   wchar_t suffix[32];
   swprintf_s(suffix, L".corrupt-%04d%02d%02d-%02d%02d%02d", now.wYear, now.wMonth, now.wDay,
              now.wHour, now.wMinute, now.wSecond);
-  std::error_code ec;
-  std::filesystem::copy_file(path, path.wstring() + suffix,
-                             std::filesystem::copy_options::overwrite_existing, ec);
+  // 同一秒内多次恢复时，不能覆盖之前保留下来的备份。
+  for (int attempt = 0; attempt < 1000; ++attempt) {
+    std::filesystem::path backup = path.wstring() + suffix;
+    if (attempt > 0) backup += L"-" + std::to_wstring(attempt);
+    std::error_code ec;
+    if (std::filesystem::copy_file(path, backup, std::filesystem::copy_options::none, ec)) {
+      return true;
+    }
+    if (ec != std::errc::file_exists) return false;
+  }
+  return false;
 }
 
 classtime::Schedule FallbackTemplate() {
@@ -79,9 +88,9 @@ Services& Services::Instance() {
   return instance;
 }
 
-void Services::Initialize() {
+bool Services::Initialize() {
   std::lock_guard<std::mutex> guard(mutex_);
-  if (initialized_) return;
+  if (initialized_) return true;
 
   // 允许用环境变量指定独立数据目录（技术预览用，避免污染正式配置）。
   wchar_t customDir[MAX_PATH]{};
@@ -105,14 +114,17 @@ void Services::Initialize() {
 
   const auto configFile = configPath();
   bool loaded = false;
-  if (std::filesystem::exists(configFile, ec)) {
+  const bool configExists = std::filesystem::exists(configFile, ec);
+  if (ec) return false;
+  if (configExists) {
     std::string error;
     const auto parsed = classtime::ParseConfig(ReadAllBytes(configFile), &error);
     if (parsed.has_value()) {
       config_ = *parsed;
       loaded = true;
-    } else {
-      BackupCorrupt(configFile);
+    } else if (!BackupCorrupt(configFile)) {
+      // 在原文件得到可靠备份之前，绝不能写入默认配置。
+      return false;
     }
   }
 
@@ -123,14 +135,14 @@ void Services::Initialize() {
     config_.templates = presets;
     config_.selectedTemplateId = presets.empty() ? "custom" : presets.front().id;
     config_.revision = 1;
-    PersistConfig();
   }
 
   classtime::PruneOverrides(config_, todayKey());
   classtime::BumpRevision(config_);
   RecomputeLocked();
+  if (!PersistConfig()) return false;
   initialized_ = true;
-  PersistConfig();
+  return true;
 }
 
 void Services::LoadPresets(std::vector<classtime::Schedule>* out) {
@@ -155,7 +167,7 @@ void Services::LoadPresets(std::vector<classtime::Schedule>* out) {
   if (out->empty()) out->push_back(FallbackTemplate());
 }
 
-void Services::PersistConfig() { WriteAtomic(configPath(), classtime::SerializeConfig(config_)); }
+bool Services::PersistConfig() { return WriteAtomic(configPath(), classtime::SerializeConfig(config_)); }
 
 void Services::PersistRuntime() {
   WriteAtomic(runtimePath(), classtime::SerializeRuntimeState(runtime_));
