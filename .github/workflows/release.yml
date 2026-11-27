@@ -54,6 +54,13 @@ jobs:
           parts = version.split('.')
           if f'FILEVERSION {",".join(parts)},0' not in resource or f'"ProductVersion", "{version}.0"' not in resource:
               raise SystemExit('Windows executable metadata does not match package version')
+          manifest = ET.parse('windows/app.manifest').getroot().find('{*}assemblyIdentity')
+          if manifest.attrib['version'] != windows_version:
+              raise SystemExit('Windows application manifest does not match package version')
+          windows_ui = pathlib.Path('windows/app/settings_window.cpp').read_text(encoding='utf-8')
+          mac_ui = pathlib.Path('macos/Sources/ItsClassTime/SettingsView.swift').read_text(encoding='utf-8')
+          if f'kVersion[] = L"{version}"' not in windows_ui or f'appVersionString = "{version}"' not in mac_ui:
+              raise SystemExit('An application settings page has stale version text')
           tag = f'v{version}'
           requested = os.environ.get('REQUESTED_TAG', '')
           if requested and requested != tag:
@@ -72,7 +79,8 @@ jobs:
 
   macos:
     needs: version
-    runs-on: macos-15
+    # The macOS 27 SDK is needed for the app's availability-guarded APIs.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
       - name: Build and check macOS installer

@@ -28,7 +28,7 @@ using namespace Windows::Foundation;
 namespace ClassTimeApp {
 namespace {
 
-constexpr wchar_t kVersion[] = L"0.1.1";
+constexpr wchar_t kVersion[] = L"0.1.2";
 using Presentation = classtime::PresentationSettings;
 constexpr double kPreviewWidth = 420;
 constexpr double kPreviewHeight = 172;

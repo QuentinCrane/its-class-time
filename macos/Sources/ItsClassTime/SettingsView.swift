@@ -35,7 +35,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
   }
 }
 
-private let appVersionString = "0.1.1"
+private let appVersionString = "0.1.2"
 
 // MARK: - 新增模板 Sheet 状态
 
