@@ -4,6 +4,8 @@ windows/packages/
 windows/Generated Files/
 windows/bin/
 windows/obj/
+macos/.build/
+macos/build/
 *.user
 *.suo
 .vs/
