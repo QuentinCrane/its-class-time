@@ -6,7 +6,7 @@
 
 | 平台 | 建议开发机 | 必备软件 | 验证目标 |
 |---|---|---|---|
-| macOS | Apple Silicon Mac | Xcode / macOS SDK / Swift | SwiftUI 配置窗口 + AppKit 悬浮条、菜单栏和通知 |
+| macOS | Apple Silicon Mac | Xcode 27 或提供 macOS 27 SDK 的 Command Line Tools | SwiftUI 配置窗口 + AppKit 悬浮条、菜单栏和通知 |
 | Windows 11 | x64 Windows 电脑 | Visual Studio 2022 17.8+（含“使用 C++ 的桌面开发”与 C++ WinUI 工具）、Windows SDK 10.0.22621+、Windows App SDK | C++/WinRT WinUI3 设置窗口 + Win32 悬浮/托盘 + 通知 |
 
 **具体 SDK 版本安装前核对官方链接**，不要把曾经某一日的最新版写死在生成工程里（见 `REFERENCES.md`）。先用当前官方模板生成真实工程并验证编译。
@@ -39,7 +39,7 @@ windows\build\engine\engine_tests.exe "<仓库绝对路径>"
 ### macOS 最短上手路径
 
 ```bash
-# 仅需 Command Line Tools（swift / iconutil / codesign / hdiutil），无需完整 Xcode.app
+# 需要 macOS 27 SDK；可使用 Command Line Tools，无需完整 Xcode.app
 ./macos/tools/build-app.sh
 # 产物：macos/build/app/ItsClassTime.app
 

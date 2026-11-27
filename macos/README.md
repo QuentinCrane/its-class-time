@@ -1,7 +1,7 @@
 # macOS 端｜Swift + SwiftUI + AppKit
 
 > 目标平台：macOS 13 Ventura 及以上（Apple Silicon 原生构建，也可在 Intel Mac 从源码编译）。
-> 工程类型：Swift Package + 原生 `ItsClassTime.app` 应用包与离线 `.dmg` 安装镜像（无需依赖完整 `Xcode.app`，仅安装 Command Line Tools 即可构建、测试与打包）。
+> 工程类型：Swift Package + 原生 `ItsClassTime.app` 应用包与离线 `.dmg` 安装镜像。构建需要 macOS 27 SDK，可使用对应的 Command Line Tools 或完整 Xcode；应用运行最低支持 macOS 13。
 
 ## 1. 当前实现状态（2026-11-27，v0.1.2）
 

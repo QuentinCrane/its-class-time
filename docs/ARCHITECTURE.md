@@ -16,7 +16,7 @@ GitHub 单仓库（共享：需求/JSON Schema/预设/测试向量）
 │       ├── Preferences (SwiftUI Settings)
 │       ├── NotificationAdapter (UserNotifications)
 │       └── ConfigStore (Codable / Foundation)
-└── windows/ [C++20 + C++/WinRT + WinUI 3 + Win32]
+└── windows/ [C++17 + C++/WinRT + WinUI 3 + Win32]
     └── ClassTimeApp.exe            # 工程标识沿用 ClassTime
         ├── ScheduleEngine + BoundaryMonitor (C++)
         ├── OverlayWindow (WinUI 3 + HWND/Win32)

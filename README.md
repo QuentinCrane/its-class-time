@@ -84,7 +84,7 @@
 
 |  | Windows 11 | macOS |
 |---|---|---|
-| 语言与框架 | C++20 · C++/WinRT · WinUI 3 · Win32 | Swift · SwiftUI · AppKit |
+| 语言与框架 | C++17 · C++/WinRT · WinUI 3 · Win32 | Swift · SwiftUI · AppKit |
 | 常驻入口 | 托盘（`Shell_NotifyIcon`） | 菜单栏（`NSStatusItem`） |
 | 悬浮窗 | WinUI 3 窗口 + `HWND_TOPMOST` + `WS_EX_NOACTIVATE` | `NSPanel`（浮动层级、不激活） |
 | 通知 | `AppNotificationManager.Show` | `UNUserNotificationCenter`（`trigger: nil`） |
@@ -165,7 +165,7 @@ tools\build-unpackaged.cmd
 
 完整的环境要求、依赖版本、已知限制和手工验收清单见 [windows/README.md](windows/README.md)。
 
-**macOS**（Swift + SwiftUI + AppKit，仅需 Command Line Tools 即可构建，不强依赖完整 Xcode.app）：
+**macOS**（Swift + SwiftUI + AppKit；构建需要 macOS 27 SDK，可使用对应的 Command Line Tools 或 Xcode；运行最低支持 macOS 13）：
 
 ```bash
 # 构建原生应用包（产物：macos/build/app/ItsClassTime.app）
