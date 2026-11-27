@@ -1,3 +1,4 @@
+#include <verrsrc.h>
 #include "resource.h"
 
 IDI_CLASSTIME ICON "Assets\\ClassTime.ico"
