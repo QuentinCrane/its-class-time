@@ -111,6 +111,7 @@ It'sClassTime/
 ### Step 5：CI / Release
 
 - Windows 和 macOS 构建工作流分别运行引擎检查并生成安装包；发行工作流仅在两端构建成功后创建 GitHub Release。
+- 发行时同步更新双端版本元数据，新增 `docs/releases/v<版本>.md`，以 `release: v<版本>` 为提交标题推送到 `main`；也可手动运行发行工作流。工作流拒绝覆盖已有标签或 Release。
 - 当前 Windows 安装包未签名、macOS 应用仅 Ad-hoc 签名且未公证，发行说明必须明确提示 SmartScreen 和 Gatekeeper 的限制。
 - 继续补充双端实机安装验证，并配置 Apple Developer ID、公证与 Windows 代码签名。
 - 版本号与 changelog 统一维护；mac 和 windows 可各自标注“本次改动”。
