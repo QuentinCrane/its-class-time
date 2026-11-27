@@ -15,6 +15,7 @@ struct PresentationSettings {
   enum class View { Bar, Ring, ScreenEdge };
   enum class Scope { AllDay, CurrentBlock };
   enum class Edge { Top, Bottom, Left, Right };
+  enum class ScreenEdgeColors { Schedule, CurrentState };
 
   static constexpr int kMinScreenEdgeThickness = 4;
   static constexpr int kMaxScreenEdgeThickness = 24;
@@ -33,6 +34,7 @@ struct PresentationSettings {
   // 贴边时是否与任务栏/屏幕边缘无缝衔接（0 间距），否则保留悬浮间距。
   bool flushWithEdge = true;
   int screenEdgeThickness = kDefaultScreenEdgeThickness;  // DIP
+  ScreenEdgeColors screenEdgeColors = ScreenEdgeColors::Schedule;
   // 分节长条沿贴边方向的整体长度（DIP）；顶部/底部控制宽度，左右控制竖向高度。
   // 圆环与屏幕边框不受影响。
   int barLengthDip = kDefaultBarLength;

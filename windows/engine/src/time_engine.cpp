@@ -228,22 +228,23 @@ std::vector<size_t> VisibleSegmentIndices(const std::vector<Segment>& segments, 
   const auto sorted = SortedIndices(segments);
   if (scope == Scope::AllDay) return sorted;
 
-  const auto blocks = SplitBlocks(segments, sorted);
-  if (blocks.empty()) return {};
-
   const int nowMinutes = now.MinutesSinceMidnight();
-  size_t chosen = 0;
-
-  // 若正处在长休息中，优先展示下一块（没有则上一块）。
-  bool inLongRest = false;
+  std::optional<size_t> currentLongRest;
   for (const size_t index : sorted) {
     if (IsLongRest(segments[index].kind) && IsWithin(segments[index], nowMinutes)) {
-      inLongRest = true;
+      currentLongRest = index;
       break;
     }
   }
 
-  if (inLongRest) {
+  const auto blocks = SplitBlocks(segments, sorted);
+  // 一天只有长休息时，当前休息仍须可见。
+  if (blocks.empty()) return currentLongRest ? std::vector<size_t>{*currentLongRest}
+                                             : std::vector<size_t>{};
+
+  size_t chosen = 0;
+  // 长休息本身与下一块一起展示；没有下一块则保留上一块。
+  if (currentLongRest) {
     size_t nextBlock = blocks.size();
     for (size_t i = 0; i < blocks.size(); ++i) {
       if (blocks[i].beginMinutes >= nowMinutes) {
@@ -264,7 +265,14 @@ std::vector<size_t> VisibleSegmentIndices(const std::vector<Segment>& segments, 
     chosen = PickBlock(blocks, nowMinutes);
   }
 
-  return blocks[chosen].members;
+  auto visible = blocks[chosen].members;
+  if (currentLongRest) {
+    visible.push_back(*currentLongRest);
+    std::stable_sort(visible.begin(), visible.end(), [&segments](size_t lhs, size_t rhs) {
+      return segments[lhs].start.TotalMinutes() < segments[rhs].start.TotalMinutes();
+    });
+  }
+  return visible;
 }
 
 std::optional<BlockBounds> CurrentBlockBounds(const std::vector<Segment>& segments,

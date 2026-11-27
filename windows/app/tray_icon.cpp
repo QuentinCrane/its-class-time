@@ -3,6 +3,13 @@
 
 #include "resource.h"
 
+#include <winrt/Microsoft.UI.Interop.h>
+
+using namespace winrt;
+using namespace Microsoft::UI::Xaml;
+using namespace Microsoft::UI::Xaml::Controls;
+using namespace Microsoft::UI::Xaml::Controls::Primitives;
+
 namespace ClassTimeApp {
 namespace {
 constexpr UINT kCallbackMessage = WM_APP + 41;
@@ -12,6 +19,7 @@ constexpr wchar_t kWindowClass[] = L"ClassTimeTrayWindow";
 bool TrayIcon::Create(HINSTANCE instance, CommandHandler handler) {
   instance_ = instance;
   handler_ = std::move(handler);
+  menuLifetime_ = std::make_shared<int>(0);
   taskbarCreatedMessage_ = RegisterWindowMessageW(L"TaskbarCreated");
 
   WNDCLASSEXW windowClass{};
@@ -50,6 +58,18 @@ void TrayIcon::AddIcon() {
 }
 
 void TrayIcon::Destroy() {
+  menuPending_ = false;
+  menuLifetime_.reset();
+  if (menu_) {
+    menu_.Hide();
+    menu_ = nullptr;
+  }
+  if (menuWindow_) {
+    menuWindow_.Close();
+    menuWindow_ = nullptr;
+    menuAnchor_ = nullptr;
+    menuHwnd_ = nullptr;
+  }
   if (added_) {
     Shell_NotifyIconW(NIM_DELETE, &data_);
     added_ = false;
@@ -114,6 +134,150 @@ LRESULT TrayIcon::HandleMessage(UINT message, WPARAM wparam, LPARAM lparam) {
 }
 
 void TrayIcon::ShowMenu() {
+  if (menuPending_) return;
+  try {
+    EnsureMenuWindow();
+    menuPending_ = true;
+    menuOpenRequested_ = false;
+
+    MenuFlyout flyout;
+    flyout.Placement(FlyoutPlacementMode::Top);
+    // 托盘锚点只有几个像素，菜单必须允许延伸到该 XAML 根窗口以外。
+    flyout.ShouldConstrainToRootBounds(false);
+    const auto icon = [](const wchar_t* glyph) {
+      FontIcon element;
+      element.Glyph(glyph);
+      return element;
+    };
+    // 将命令投递回托盘窗口，避免“退出”在 WinUI 点击回调中释放自身。
+    const auto appendAction = [&](const wchar_t* text, const wchar_t* glyph, UINT command) {
+      MenuFlyoutItem item;
+      item.Text(text);
+      item.Icon(icon(glyph));
+      item.Click([target = window_, command](auto const&, auto const&) {
+        PostMessageW(target, WM_COMMAND, MAKEWPARAM(command, 0), 0);
+      });
+      flyout.Items().Append(item);
+    };
+    const auto appendChoice = [&](MenuFlyoutSubItem const& parent, const wchar_t* text,
+                                  const wchar_t* group, bool selected, UINT command) {
+      RadioMenuFlyoutItem item;
+      item.Text(text);
+      item.GroupName(group);
+      item.IsChecked(selected);
+      item.Click([target = window_, command](auto const&, auto const&) {
+        PostMessageW(target, WM_COMMAND, MAKEWPARAM(command, 0), 0);
+      });
+      parent.Items().Append(item);
+    };
+
+    appendAction(L"打开设置", L"\uE713", kTrayOpenSettings);
+    appendAction(presentation_.visible ? L"隐藏桌面组件" : L"显示桌面组件", L"\uE7F4",
+                 kTrayToggleOverlay);
+    flyout.Items().Append(MenuFlyoutSeparator());
+
+    using View = classtime::PresentationSettings::View;
+    const wchar_t* viewLabel = presentation_.view == View::Ring ? L"圆环"
+                               : presentation_.view == View::ScreenEdge ? L"屏幕边框"
+                                                                        : L"分节长条";
+    MenuFlyoutSubItem view;
+    view.Text(hstring(std::wstring(L"显示形式  ·  ") + viewLabel));
+    view.Icon(icon(L"\uE7F4"));
+    appendChoice(view, L"分节长条", L"ClassTimeView", presentation_.view == View::Bar,
+                 kTrayBarView);
+    appendChoice(view, L"圆环", L"ClassTimeView", presentation_.view == View::Ring,
+                 kTrayRingView);
+    appendChoice(view, L"屏幕边框", L"ClassTimeView", presentation_.view == View::ScreenEdge,
+                 kTrayScreenEdgeView);
+    flyout.Items().Append(view);
+
+    const bool allDay = presentation_.scope == classtime::PresentationSettings::Scope::AllDay;
+    MenuFlyoutSubItem scope;
+    scope.Text(allDay ? L"显示范围  ·  全天" : L"显示范围  ·  当前时段");
+    scope.Icon(icon(L"\uE823"));
+    appendChoice(scope, L"当前时段", L"ClassTimeScope", !allDay, kTrayCurrentScope);
+    appendChoice(scope, L"全天", L"ClassTimeScope", allDay, kTrayAllDayScope);
+    flyout.Items().Append(scope);
+    flyout.Items().Append(MenuFlyoutSeparator());
+    appendAction(muted_ ? L"恢复提醒" : L"暂停提醒", muted_ ? L"\uE768" : L"\uE7ED",
+                 kTrayToggleMute);
+    appendAction(L"退出", L"\uE8BB", kTrayExit);
+    const std::weak_ptr<int> lifetime = menuLifetime_;
+    flyout.Closed([this, lifetime](auto const&, auto const&) {
+      if (lifetime.expired()) return;
+      menuPending_ = false;
+      if (menuHwnd_) ShowWindow(menuHwnd_, SW_HIDE);
+    });
+    menu_ = flyout;
+
+    POINT cursor{};
+    GetCursorPos(&cursor);
+    SetWindowPos(menuHwnd_, HWND_TOPMOST, cursor.x, cursor.y, 2, 2,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    menuWindow_.Activate();
+    // 等待内容岛完成布局后再定位菜单。
+    const auto dispatcher = menuWindow_.DispatcherQueue();
+    if (!dispatcher.TryEnqueue([this, lifetime] {
+          if (lifetime.expired()) return;
+          OpenMenuFlyout();
+        })) {
+      menuPending_ = false;
+      ShowWindow(menuHwnd_, SW_HIDE);
+      ShowFallbackMenu();
+    }
+  } catch (...) {
+    menuPending_ = false;
+    if (menuHwnd_) ShowWindow(menuHwnd_, SW_HIDE);
+    ShowFallbackMenu();
+  }
+}
+
+void TrayIcon::OpenMenuFlyout() {
+  if (!menuPending_ || menuOpenRequested_ || !menu_ || !menuAnchor_ || !menuAnchor_.IsLoaded()) {
+    return;
+  }
+  menuOpenRequested_ = true;
+  try {
+    menu_.ShowAt(menuAnchor_);
+  } catch (...) {
+    menuPending_ = false;
+    if (menuHwnd_) ShowWindow(menuHwnd_, SW_HIDE);
+    ShowFallbackMenu();
+  }
+}
+
+void TrayIcon::EnsureMenuWindow() {
+  if (menuWindow_) return;
+  Window window;
+  window.Title(L"ClassTime Tray Menu");
+  auto appWindow = window.AppWindow();
+  if (auto presenter = appWindow.Presenter().try_as<Microsoft::UI::Windowing::OverlappedPresenter>()) {
+    presenter.SetBorderAndTitleBar(false, false);
+    presenter.IsResizable(false);
+    presenter.IsMinimizable(false);
+    presenter.IsMaximizable(false);
+  }
+  Grid anchor;
+  const std::weak_ptr<int> lifetime = menuLifetime_;
+  anchor.Loaded([this, lifetime](auto const&, auto const&) {
+    if (!lifetime.expired()) OpenMenuFlyout();
+  });
+  window.Content(anchor);
+  HWND hwnd = reinterpret_cast<HWND>(Microsoft::UI::GetWindowFromWindowId(appWindow.Id()));
+  if (!hwnd) throw hresult_error(E_FAIL);
+  const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+  SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~(WS_CAPTION | WS_THICKFRAME));
+  const LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+  SetWindowLongPtrW(hwnd, GWL_EXSTYLE,
+                    (exStyle & ~(WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE)) | WS_EX_TOOLWINDOW);
+  SetWindowPos(hwnd, nullptr, 0, 0, 2, 2,
+               SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+  menuWindow_ = window;
+  menuAnchor_ = anchor;
+  menuHwnd_ = hwnd;
+}
+
+void TrayIcon::ShowFallbackMenu() {
   HMENU menu = CreatePopupMenu();
   if (menu == nullptr) return;
   AppendMenuW(menu, MF_STRING, kTrayOpenSettings, L"打开设置");

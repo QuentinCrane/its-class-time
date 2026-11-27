@@ -79,6 +79,28 @@
       "nextBoundary": null
     }
   ],
+  "scopeCases": [
+    {
+      "id": "before-lunch",
+      "now": "2026-11-23T11:29:59",
+      "visibleSegmentIds": ["h1", "hb1", "h2", "hb2", "h3", "hb3", "h4"]
+    },
+    {
+      "id": "lunch-start",
+      "now": "2026-11-23T11:30:00",
+      "visibleSegmentIds": ["hl", "h5", "hb4", "h6"]
+    },
+    {
+      "id": "during-lunch",
+      "now": "2026-11-23T12:30:00",
+      "visibleSegmentIds": ["hl", "h5", "hb4", "h6"]
+    },
+    {
+      "id": "after-lunch",
+      "now": "2026-11-23T14:00:00",
+      "visibleSegmentIds": ["h5", "hb4", "h6"]
+    }
+  ],
   "editCases": [
     {
       "id": "lunch-shift",

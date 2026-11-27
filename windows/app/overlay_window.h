@@ -155,6 +155,7 @@ class OverlayWindow {
     int filledPixels = -1;
     uint32_t fill = 0;
     uint32_t track = 0;
+    std::vector<uint32_t> timeline;
     int alpha = -1;
   };
   std::array<EdgeStrip, 4> screenEdgeStrips_;

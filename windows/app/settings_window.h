@@ -194,7 +194,10 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard displayPanelMotion_{nullptr};
   std::optional<bool> displayPanelScreenEdge_;
   winrt::Microsoft::UI::Xaml::Controls::StackPanel dockControls_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::StackPanel dockBehavior_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel screenEdgeControls_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::StackPanel screenEdgeColorPanel_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid screenEdgeColorSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Slider screenEdgeSlider_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock screenEdgeValue_{nullptr};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer thicknessTimer_{nullptr};

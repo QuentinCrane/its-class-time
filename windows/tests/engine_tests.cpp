@@ -1,5 +1,6 @@
 // 作息引擎对等测试：直接消费 shared/ 下的预设与测试向量。
 // 运行：engine_tests <仓库根目录>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -199,7 +200,7 @@ void TestEditVectors(const std::string& root, const classtime::Schedule& highSch
   }
 }
 
-void TestScope(const classtime::Schedule& highSchool) {
+void TestScope(const std::string& root, const classtime::Schedule& highSchool) {
   const auto visibleAt = [&](const char* iso) {
     return IdsOfIndices(highSchool.segments,
                         classtime::VisibleSegmentIndices(highSchool.segments, Clock(iso),
@@ -208,8 +209,62 @@ void TestScope(const classtime::Schedule& highSchool) {
 
   Check(visibleAt("2026-11-23T07:00:00") == "h1,hb1,h2,hb2,h3,hb3,h4", "上课前展示第一块");
   Check(visibleAt("2026-11-23T09:00:00") == "h1,hb1,h2,hb2,h3,hb3,h4", "上午展示第一块");
-  Check(visibleAt("2026-11-23T12:30:00") == "h5,hb4,h6", "午休时展示下一块");
+  Check(visibleAt("2026-11-23T12:30:00") == "hl,h5,hb4,h6", "午休时展示休息和下一块");
   Check(visibleAt("2026-11-23T16:30:00") == "h5,hb4,h6", "放学后展示最后一块");
+
+  std::string error;
+  const auto vectors = classtime::json::Value::Parse(
+      ReadFile(root + "/shared/test-cases/time-engine.json"), &error);
+  const auto* scopeCases = vectors ? vectors->Find("scopeCases") : nullptr;
+  Check(scopeCases && scopeCases->IsArray(), "共享向量包含显示范围用例");
+  if (scopeCases && scopeCases->IsArray()) {
+    for (const auto& item : scopeCases->items()) {
+      const auto* id = item.Find("id");
+      const auto* now = item.Find("now");
+      const auto* expected = item.Find("visibleSegmentIds");
+      if (!id || !now || !expected || !expected->IsArray()) {
+        Check(false, "显示范围用例字段完整");
+        continue;
+      }
+      std::string expectedIds;
+      for (const auto& segment : expected->items()) {
+        if (!expectedIds.empty()) expectedIds += ",";
+        expectedIds += segment.AsString();
+      }
+      const auto actual = visibleAt(now->AsString().c_str());
+      Check(actual == expectedIds, "共享显示范围 " + id->AsString() + " 期望 " +
+                                       expectedIds + " 实际 " + actual);
+    }
+  }
+
+  auto longBreakPlan = highSchool.segments;
+  for (auto& segment : longBreakPlan) {
+    if (segment.id == "hl") segment.kind = classtime::SegmentKind::LongBreak;
+  }
+  const auto lunchTime = Clock("2026-11-23T12:30:00");
+  Check(IdsOfIndices(longBreakPlan, classtime::VisibleSegmentIndices(
+                                        longBreakPlan, lunchTime, classtime::Scope::CurrentBlock)) ==
+            "hl,h5,hb4,h6",
+        "长休息与下一块同时显示");
+  auto unsortedPlan = longBreakPlan;
+  std::reverse(unsortedPlan.begin(), unsortedPlan.end());
+  Check(IdsOfIndices(unsortedPlan, classtime::VisibleSegmentIndices(
+                                       unsortedPlan, lunchTime, classtime::Scope::CurrentBlock)) ==
+            "hl,h5,hb4,h6",
+        "未排序的日程也按时间顺序展示长休息和下一块");
+  longBreakPlan.erase(std::remove_if(longBreakPlan.begin(), longBreakPlan.end(),
+                                    [](const classtime::Segment& segment) {
+                                      return segment.start.TotalMinutes() >= 14 * 60;
+                                    }),
+                      longBreakPlan.end());
+  Check(IdsOfIndices(longBreakPlan, classtime::VisibleSegmentIndices(
+                                        longBreakPlan, lunchTime, classtime::Scope::CurrentBlock)) ==
+            "h1,hb1,h2,hb2,h3,hb3,h4,hl",
+        "末尾长休息与上一块按时间顺序显示");
+  const auto rest = std::vector<classtime::Segment>{longBreakPlan.back()};
+  Check(IdsOfIndices(rest, classtime::VisibleSegmentIndices(
+                               rest, lunchTime, classtime::Scope::CurrentBlock)) == "hl",
+        "仅有长休息的日程仍显示当前休息");
 
   const auto allDay =
       classtime::VisibleSegmentIndices(highSchool.segments, Clock("2026-11-23T12:30:00"),
@@ -344,14 +399,26 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
 
   config.presentation.view = classtime::PresentationSettings::View::ScreenEdge;
   config.presentation.screenEdgeThickness = 17;
+  config.presentation.screenEdgeColors = classtime::PresentationSettings::ScreenEdgeColors::CurrentState;
   const auto edgeConfig = classtime::ParseConfig(classtime::SerializeConfig(config), &error);
   Check(edgeConfig && edgeConfig->presentation.view == classtime::PresentationSettings::View::ScreenEdge,
         "保留屏幕边框视图");
   Check(edgeConfig && edgeConfig->presentation.screenEdgeThickness == 17, "保留屏幕边框粗细");
+  Check(edgeConfig && edgeConfig->presentation.screenEdgeColors ==
+                          classtime::PresentationSettings::ScreenEdgeColors::CurrentState,
+        "保留屏幕边框的跟随当前时段配色");
   const auto withTemplate = "{\"templates\":[" + classtime::SerializeSchedule(highSchool, 0) +
                             "],\"presentation\":";
   const auto legacy = classtime::ParseConfig(withTemplate + R"({"view":"screen_edge"}})", &error);
   Check(legacy && legacy->presentation.screenEdgeThickness == 10, "旧配置默认使用加粗边框");
+  Check(legacy && legacy->presentation.screenEdgeColors ==
+                       classtime::PresentationSettings::ScreenEdgeColors::Schedule,
+        "旧配置默认使用按时段分色");
+  const auto unknownColors =
+      classtime::ParseConfig(withTemplate + R"({"screenEdgeColors":"unknown"}})", &error);
+  Check(unknownColors && unknownColors->presentation.screenEdgeColors ==
+                              classtime::PresentationSettings::ScreenEdgeColors::Schedule,
+        "未知边框配色回退到按时段分色");
   Check(legacy && legacy->presentation.flushWithEdge, "旧配置默认紧贴边缘");
   Check(legacy && legacy->presentation.barLengthDip == 0 &&
             legacy->presentation.EffectiveBarLength() == 680,
@@ -533,12 +600,86 @@ void TestWidgetState(const classtime::Schedule& highSchool) {
   Check(atLater.edgeProgress > atStart.edgeProgress, "全天边框随当前时钟推进");
   const auto lunch = Clock("2026-11-23T12:30:00");
   const auto block = ClassTimeApp::BuildWidgetState(highSchool.segments, lunch, Scope::CurrentBlock);
-  Check(!block.visibleSegments.empty() && block.visibleSegments.front().id == "h5",
-        "当前时段预览使用与组件相同的分块");
+  Check(!block.visibleSegments.empty() && block.visibleSegments.front().id == "hl" &&
+            block.snapshot.current && block.snapshot.current->id == "hl" &&
+            NearlyEqual(ClassTimeApp::WidgetSegmentProgress(block.visibleSegments.front(), lunch,
+                                                            block.snapshot), 0.4, 0.0001),
+        "当前时段预览与组件显示午休及其进度");
   Check(block.focusCompleted == 4 && block.focusTotal == 6, "圆环统计来自实际作息");
   const auto empty = ClassTimeApp::BuildWidgetState({}, later, Scope::AllDay);
   Check(empty.visibleSegments.empty() && !empty.snapshot.hasSchedule && empty.edgeProgress == 0,
         "空计划预览没有虚构课程或进度");
+}
+
+void TestScreenEdgeTimeline(const classtime::Schedule& highSchool) {
+  using namespace ClassTimeApp;
+  using Kind = classtime::SegmentKind;
+  const auto noon = Clock("2026-11-23T12:30:00");
+  const auto runs = BuildScreenEdgeRuns(highSchool.segments, noon);
+  Check(!runs.empty() && NearlyEqual(runs.front().begin, 0, 1e-8) &&
+            NearlyEqual(runs.back().end, 1, 1e-8),
+        "全天边框覆盖首段到末段");
+  bool contiguous = true;
+  for (size_t i = 1; i < runs.size(); ++i) {
+    contiguous = contiguous && NearlyEqual(runs[i - 1].end, runs[i].begin, 1e-8);
+  }
+  Check(contiguous, "全天边框各段连续且不重叠");
+  std::vector<ScreenEdgeRun> lunch;
+  for (const auto& run : runs) if (run.kind == Kind::Lunch) lunch.push_back(run);
+  Check(lunch.size() == 2 && lunch[0].elapsed && !lunch[1].elapsed &&
+            NearlyEqual(lunch[0].begin, 210.0 / 460, 1e-8) &&
+            NearlyEqual(lunch[0].end, 270.0 / 460, 1e-8) &&
+            NearlyEqual(lunch[1].end, 360.0 / 460, 1e-8),
+        "午休按真实时长分配并在当前时间分为已过和未到");
+
+  auto first = highSchool.segments.front();
+  first.start = *classtime::TimeOfDay::Parse("08:00");
+  first.end = *classtime::TimeOfDay::Parse("09:00");
+  auto second = first;
+  second.id = "later";
+  second.start = *classtime::TimeOfDay::Parse("10:00");
+  second.end = *classtime::TimeOfDay::Parse("11:00");
+  const auto gap = BuildScreenEdgeRuns({second, first}, Clock("2026-11-23T09:30:00"));
+  Check(gap.size() == 4 && !gap[1].kind && gap[1].elapsed && !gap[2].kind &&
+            !gap[2].elapsed && NearlyEqual(gap[1].begin, 1.0 / 3, 1e-8) &&
+            NearlyEqual(gap[1].end, 0.5, 1e-8) && NearlyEqual(gap[2].end, 2.0 / 3, 1e-8),
+        "空档按实际时长占位，且不依赖输入顺序");
+  const auto before = BuildScreenEdgeRuns({first, second}, Clock("2026-11-23T07:00:00"));
+  const auto after = BuildScreenEdgeRuns({first, second}, Clock("2026-11-23T12:00:00"));
+  Check(std::all_of(before.begin(), before.end(), [](const auto& run) { return !run.elapsed; }) &&
+            std::all_of(after.begin(), after.end(), [](const auto& run) { return run.elapsed; }),
+        "开始前全部为未到，结束后全部为已过");
+  Check(BuildScreenEdgeRuns({}, noon).empty(), "无日程时没有虚构的分色时段");
+
+  const auto stops = BuildScreenEdgeBlendStops(runs);
+  bool ordered = !stops.empty();
+  for (size_t i = 1; i < stops.size(); ++i) ordered = ordered &&
+      stops[i - 1].position <= stops[i].position;
+  Check(ordered && NearlyEqual(stops.front().position, 0, 1e-8) &&
+            NearlyEqual(stops.back().position, 1, 1e-8),
+        "颜色渐变按时间顺序覆盖完整边框");
+  const std::vector<ScreenEdgeRun> shortBreak = {
+      {0, 0.2, Kind::Focus, true}, {0.2, 0.202, Kind::Break, true},
+      {0.202, 1, Kind::Focus, true}};
+  const auto shortStops = BuildScreenEdgeBlendStops(shortBreak);
+  Check(shortStops.size() == 6 && NearlyEqual(shortStops[1].position, 0.1992, 1e-8) &&
+            NearlyEqual(shortStops[2].position, 0.2008, 1e-8) &&
+            NearlyEqual(shortStops[3].position, 0.2012, 1e-8) &&
+            shortStops[2].position < shortStops[3].position,
+        "短课间两端的渐变收窄，保留可辨认的中段");
+  const auto sameColor = BuildScreenEdgeBlendStops(
+      {{0, 0.5, Kind::Focus, true}, {0.5, 1, Kind::Focus, true}});
+  Check(sameColor.size() == 2, "相同颜色的相邻时段不制造额外渐变");
+  Check(BuildScreenEdgeBlendStops({}).empty(), "无日程时不生成渐变");
+
+  const std::vector<ScreenEdgeRun> acrossCorner = {{0.3, 0.6, Kind::Lunch, true}};
+  const auto projected = ProjectScreenEdgeRuns(acrossCorner, {100, 60, 90, 50});
+  Check(projected.size() == 3 && projected[0].side == 0 &&
+            NearlyEqual(projected[0].begin, 90, 1e-8) && NearlyEqual(projected[0].end, 100, 1e-8) &&
+            projected[1].side == 1 && NearlyEqual(projected[1].begin, 0, 1e-8) &&
+            NearlyEqual(projected[1].end, 60, 1e-8) && projected[2].side == 2 &&
+            NearlyEqual(projected[2].begin, 0, 1e-8) && NearlyEqual(projected[2].end, 20, 1e-8),
+        "跨越边角的时段沿四边顺时针保持正确比例");
 }
 
 }  // namespace
@@ -554,10 +695,11 @@ int main(int argc, char** argv) {
   if (!highSchool.segments.empty()) {
     TestTimeVectors(root, highSchool);
     TestEditVectors(root, highSchool);
-    TestScope(highSchool);
+    TestScope(root, highSchool);
     TestBoundariesAndDedupe(highSchool);
     TestEditOperations(highSchool);
     TestWidgetState(highSchool);
+    TestScreenEdgeTimeline(highSchool);
   }
   TestConfigRoundtrip(highSchool, university);
   TestTemplateCreation(highSchool, university);

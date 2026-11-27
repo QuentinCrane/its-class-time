@@ -71,8 +71,8 @@ std::string EventKey(const std::string& dateKey, const std::string& segmentId, B
 // —— 显示范围（仅影响展示过滤，不影响通知与引擎判定）——
 enum class Scope { AllDay, CurrentBlock };
 
-// 以 lunch / long_break 为分块分隔符，返回当前应展示的时段下标（按开始时间排序后的下标）。
-// 当前处于长休息 → 展示即将到来的块；没有下一块则展示上一块。
+// 以 lunch / long_break 为分块分隔符，返回原始 segments 的下标，结果按开始时间排列。
+// 当前处于长休息 → 同时展示休息和即将到来的块；没有下一块则展示上一块。
 std::vector<size_t> VisibleSegmentIndices(const std::vector<Segment>& segments, const WallClock& now,
                                           Scope scope);
 

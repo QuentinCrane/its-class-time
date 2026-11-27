@@ -256,6 +256,11 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
           PresentationSettings::kMinScreenEdgeThickness,
           PresentationSettings::kMaxScreenEdgeThickness);
     }
+    if (const auto* colors = presentation->Find("screenEdgeColors")) {
+      config.presentation.screenEdgeColors = colors->AsString() == "current_state"
+          ? PresentationSettings::ScreenEdgeColors::CurrentState
+          : PresentationSettings::ScreenEdgeColors::Schedule;
+    }
     if (const auto* barLength = presentation->Find("barLengthDip")) {
       const int value = barLength->AsInt(PresentationSettings::kDefaultBarLength);
       config.presentation.barLengthDip = value == PresentationSettings::kDefaultBarLength
@@ -343,6 +348,9 @@ std::string SerializeConfig(const AppConfig& config) {
   presentation.Set("autoHideAtEdge", json::Value::MakeBool(config.presentation.autoHideAtEdge));
   presentation.Set("flushWithEdge", json::Value::MakeBool(config.presentation.flushWithEdge));
   presentation.Set("screenEdgeThickness", json::Value::MakeNumber(config.presentation.screenEdgeThickness));
+  presentation.Set("screenEdgeColors", json::Value::MakeString(
+      config.presentation.screenEdgeColors == PresentationSettings::ScreenEdgeColors::CurrentState
+          ? "current_state" : "schedule"));
   presentation.Set("barLengthDip", json::Value::MakeNumber(config.presentation.barLengthDip));
   presentation.Set("timelineSnapMinutes", json::Value::MakeNumber(config.presentation.timelineSnapMinutes));
   presentation.Set("barBackground", json::Value::MakeString(config.presentation.barBackground));

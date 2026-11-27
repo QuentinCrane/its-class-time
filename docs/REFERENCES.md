@@ -25,6 +25,8 @@
 10. [microsoft-ui-xaml #7606](https://github.com/microsoft/microsoft-ui-xaml/issues/7606) — 纯代码构建 WinUI 3 时，`XamlControlsResources` 要求应用实现 `IXamlMetadataProvider`，否则控件默认样式解析失败。
 11. [Inno Setup 帮助文档](https://jrsoftware.org/ishelp/) — 当前 Windows 离线安装包使用的打包工具。
 12. [ScrollViewer.ChangeView](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.controls.scrollviewer.changeview?view=windows-app-sdk-1.6) — 时间轴首次定位；2026-11-25 核对 Windows App SDK 1.6 支持该接口。
+13. [FlyoutBase.ShouldConstrainToRootBounds](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.controls.primitives.flyoutbase.shouldconstraintorootbounds?view=windows-app-sdk-1.6) — 托盘菜单可延伸至锚点窗口之外；Windows App SDK 1.4 起支持，项目使用 1.6。
+14. [GradientStop](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.media.gradientstop?view=windows-app-sdk-1.6) — WinUI 预览使用渐变色标表达边框的平滑颜色过渡。
 
 ## GitHub
 

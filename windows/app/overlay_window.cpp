@@ -129,7 +129,8 @@ void RoundProgressTip(uint32_t* pixels, SIZE size, bool horizontal, bool reverse
 }
 
 bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool reverse,
-                     int filledPixels, uint32_t fill, uint32_t track, int alpha = 255) {
+                     int filledPixels, uint32_t fill, uint32_t track,
+                     const std::vector<uint32_t>& timeline, int alpha = 255) {
   SIZE size{bounds.right - bounds.left, bounds.bottom - bounds.top};
   BITMAPINFO info{};
   info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -149,7 +150,19 @@ bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool revers
     if (previousBitmap && previousBitmap != HGDI_ERROR) {
       auto* pixels = static_cast<uint32_t*>(bitmapData);
       const int width = size.cx;
-      if (horizontal) {
+      const int length = horizontal ? size.cx : size.cy;
+      if (timeline.size() == static_cast<size_t>(length)) {
+        for (int y = 0; y < size.cy; ++y) {
+          if (horizontal) {
+            if (reverse) std::reverse_copy(timeline.begin(), timeline.end(), pixels);
+            else std::copy(timeline.begin(), timeline.end(), pixels);
+          } else {
+            const int along = reverse ? size.cy - 1 - y : y;
+            std::fill_n(pixels, width, timeline[along]);
+          }
+          pixels += width;
+        }
+      } else if (horizontal) {
         const int first = reverse ? width - filledPixels : filledPixels;
         for (int y = 0; y < size.cy; ++y) {
           std::fill_n(pixels, first, reverse ? track : fill);
@@ -161,8 +174,10 @@ bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool revers
         std::fill_n(pixels, width * first, reverse ? track : fill);
         std::fill_n(pixels + width * first, width * (size.cy - first), reverse ? fill : track);
       }
-      RoundProgressTip(static_cast<uint32_t*>(bitmapData), size, horizontal, reverse,
-                       filledPixels, fill, track);
+      if (timeline.empty()) {
+        RoundProgressTip(static_cast<uint32_t*>(bitmapData), size, horizontal, reverse,
+                         filledPixels, fill, track);
+      }
       POINT origin{};
       POINT position{bounds.left, bounds.top};
       // SourceConstantAlpha 与逐像素透明度相乘：淡入淡出只需重提交，不必改像素。
@@ -1545,7 +1560,7 @@ void OverlayWindow::RefreshScreenEdge() {
   const auto snapshot = classtime::Evaluate(plan.segments, now);
   const auto palette = CurrentPalette();
   auto accent = palette.accent;
-  // 全天范围也跟随当前状态着色：上课用强调色、课间用休息色、午休用暖黄色。
+  // 单色样式跟随当前状态；分色样式下各时段分别取色。
   if (snapshot.current) accent = KindColor(palette, snapshot.current->kind);
   double progress = 0;
   if (!plan.segments.empty()) {
@@ -1567,6 +1582,42 @@ void OverlayWindow::RefreshScreenEdge() {
   }
   const auto fill = PremultipliedBgra(accent);
   const auto track = PremultipliedBgra(Windows::UI::ColorHelper::FromArgb(172, 100, 117, 137));
+  std::array<std::vector<uint32_t>, 4> timelines;
+  if (allDay_ && services.config().presentation.screenEdgeColors ==
+                     classtime::PresentationSettings::ScreenEdgeColors::Schedule) {
+    const auto runs = BuildScreenEdgeRuns(plan.segments, now);
+    if (!runs.empty()) {
+      for (size_t i = 0; i < timelines.size(); ++i) timelines[i].assign(lengths[i], track);
+      const std::array<double, 4> sideLengths = {
+          static_cast<double>(lengths[0]), static_cast<double>(lengths[1]),
+          static_cast<double>(lengths[2]), static_cast<double>(lengths[3])};
+      for (const auto& run : ProjectScreenEdgeRuns(runs, sideLengths)) {
+        auto& timeline = timelines[run.side];
+        const int begin = std::clamp(static_cast<int>(std::lround(run.begin)), 0, lengths[run.side]);
+        const int end = std::clamp(static_cast<int>(std::lround(run.end)), 0, lengths[run.side]);
+        const auto color = WidgetAppearance::ScreenEdgeRunColor(palette, run.kind, run.elapsed);
+        std::fill(timeline.begin() + begin, timeline.begin() + end, PremultipliedBgra(color));
+      }
+      // 仅在颜色交界处采样渐变，转角两侧沿同一条时间线连续过渡。
+      const auto stops = WidgetAppearance::ScreenEdgeColorStops(runs, palette);
+      int sideStart = 0;
+      for (size_t side = 0; side < timelines.size(); ++side) {
+        auto& timeline = timelines[side];
+        for (size_t i = 1; i + 1 < stops.size(); i += 2) {
+          const int begin = std::clamp(static_cast<int>(std::floor(
+              stops[i].position * perimeter - sideStart)), 0, lengths[side]);
+          const int end = std::clamp(static_cast<int>(std::ceil(
+              stops[i + 1].position * perimeter - sideStart)), 0, lengths[side]);
+          for (int pixel = begin; pixel < end; ++pixel) {
+            const double position = (sideStart + pixel + 0.5) / perimeter;
+            timeline[pixel] = PremultipliedBgra(
+                WidgetAppearance::ScreenEdgeColorAt(stops, position));
+          }
+        }
+        sideStart += lengths[side];
+      }
+    }
+  }
   const int alpha = stripAlpha_;
   int remaining = static_cast<int>(std::lround(progress * perimeter));
   for (size_t i = 0; i < screenEdgeStrips_.size(); ++i) {
@@ -1581,9 +1632,10 @@ void OverlayWindow::RefreshScreenEdge() {
     const int pixels = std::clamp(remaining, 0, lengths[i]);
     remaining -= pixels;
     if (pixels == strip.filledPixels && fill == strip.fill && track == strip.track &&
+        timelines[i] == strip.timeline &&
         alpha == strip.alpha && EqualRect(&bounds[i], &strip.bounds)) continue;
     if (!strip.hwnd || !RenderEdgeStrip(strip.hwnd, bounds[i], i % 2 == 0, i >= 2,
-                                        pixels, fill, track, alpha)) {
+                                        pixels, fill, track, timelines[i], alpha)) {
       HideScreenEdge();
       return;
     }
@@ -1591,6 +1643,7 @@ void OverlayWindow::RefreshScreenEdge() {
     strip.filledPixels = pixels;
     strip.fill = fill;
     strip.track = track;
+    strip.timeline = std::move(timelines[i]);
     strip.alpha = alpha;
     if (!IsWindowVisible(strip.hwnd)) ShowWindow(strip.hwnd, SW_SHOWNOACTIVATE);
   }
@@ -1609,7 +1662,7 @@ void OverlayWindow::RenderStrips(int alpha) {
     auto& strip = screenEdgeStrips_[i];
     if (!strip.hwnd || strip.filledPixels < 0 || alpha == strip.alpha) continue;
     if (RenderEdgeStrip(strip.hwnd, strip.bounds, i % 2 == 0, i >= 2, strip.filledPixels,
-                        strip.fill, strip.track, alpha)) {
+                        strip.fill, strip.track, strip.timeline, alpha)) {
       strip.alpha = alpha;
     }
   }

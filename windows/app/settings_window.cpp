@@ -135,20 +135,20 @@ TextBlock MakeText(const std::wstring& text, double size, Brush brush = nullptr)
 }
 
 TextBlock MakeSectionTitle(const std::wstring& text) {
-  auto block = MakeText(text, 28);
+  auto block = MakeText(text, 30);
   if (auto style = ResourceStyle(L"TitleTextBlockStyle")) block.Style(style);
   return block;
 }
 
 TextBlock MakeSubtitle(const std::wstring& text) {
-  auto block = MakeText(text, 12, ResourceBrush(L"TextFillColorSecondaryBrush", SecondaryColor()));
+  auto block = MakeText(text, 13, ResourceBrush(L"TextFillColorSecondaryBrush", SecondaryColor()));
   return block;
 }
 
 Border MakeCard() {
   Border card;
-  card.CornerRadius(CornerRadius{8, 8, 8, 8});
-  card.Padding(Thickness{16, 16, 16, 16});
+  card.CornerRadius(CornerRadius{12, 12, 12, 12});
+  card.Padding(Thickness{18, 18, 18, 18});
   card.Background(ResourceBrush(L"CardBackgroundFillColorDefaultBrush",
                                Windows::UI::ColorHelper::FromArgb(255, 250, 250, 252)));
   card.BorderBrush(ResourceBrush(L"CardStrokeColorDefaultBrush",
@@ -173,9 +173,20 @@ Border MakeDivider() {
 
 // A setting reads as one row: its name and explanation stay beside the native switch.
 Grid MakeToggleRow(ToggleSwitch const& toggle, const std::wstring& title,
-                   const std::wstring& description = L"") {
+                   const std::wstring& description = L"", const wchar_t* glyph = nullptr) {
   Grid row;
-  row.ColumnSpacing(16);
+  row.ColumnSpacing(14);
+  if (glyph) {
+    ColumnDefinition iconColumn;
+    iconColumn.Width(GridLengthHelper::FromValueAndType(28, GridUnitType::Pixel));
+    row.ColumnDefinitions().Append(iconColumn);
+    FontIcon icon;
+    icon.Glyph(glyph);
+    icon.FontSize(20);
+    icon.Foreground(ResourceBrush(L"TextFillColorSecondaryBrush", SecondaryColor()));
+    icon.VerticalAlignment(VerticalAlignment::Center);
+    row.Children().Append(icon);
+  }
   ColumnDefinition textColumn;
   textColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
   ColumnDefinition actionColumn;
@@ -190,6 +201,7 @@ Grid MakeToggleRow(ToggleSwitch const& toggle, const std::wstring& title,
   label.FontWeight(Microsoft::UI::Text::FontWeights::SemiBold());
   copy.Children().Append(label);
   if (!description.empty()) copy.Children().Append(MakeSubtitle(description));
+  Grid::SetColumn(copy, glyph ? 1 : 0);
   row.Children().Append(copy);
   toggle.Header(nullptr);
   toggle.OnContent(box_value(L""));
@@ -197,7 +209,7 @@ Grid MakeToggleRow(ToggleSwitch const& toggle, const std::wstring& title,
   toggle.MinWidth(0);
   toggle.VerticalAlignment(VerticalAlignment::Center);
   Automation::AutomationProperties::SetName(toggle, hstring(title));
-  Grid::SetColumn(toggle, 1);
+  Grid::SetColumn(toggle, glyph ? 2 : 1);
   row.Children().Append(toggle);
   return row;
 }
@@ -378,10 +390,132 @@ Border MakeSegments(Grid& grid, std::initializer_list<const wchar_t*> labels,
   return track;
 }
 
+// 三种显示方式用原生 ToggleButton 和简洁示意图表达，仍保留键盘和屏幕阅读器操作。
+Grid MakeViewChoices(Grid& grid, std::function<void(int)> select) {
+  grid = Grid();
+  grid.ColumnSpacing(10);
+  const wchar_t* labels[] = {L"分节长条", L"圆环", L"屏幕边框"};
+  for (int index = 0; index < 3; ++index) {
+    ColumnDefinition column;
+    column.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+    grid.ColumnDefinitions().Append(column);
+    RowDefinition row;
+    row.Height(GridLengthHelper::Auto());
+    grid.RowDefinitions().Append(row);
+
+    Primitives::ToggleButton choice;
+    choice.Tag(box_value(L"view-choice"));
+    choice.HorizontalAlignment(HorizontalAlignment::Stretch);
+    choice.HorizontalContentAlignment(HorizontalAlignment::Center);
+    choice.Padding(Thickness{4, 10, 4, 10});
+    choice.CornerRadius(CornerRadius{10, 10, 10, 10});
+    Automation::AutomationProperties::SetName(choice, labels[index]);
+
+    StackPanel body;
+    body.Spacing(7);
+    body.HorizontalAlignment(HorizontalAlignment::Center);
+    Canvas preview;
+    preview.Width(100);
+    preview.Height(34);
+    preview.HorizontalAlignment(HorizontalAlignment::Center);
+    const auto accent = SolidColorBrush(AccentColor());
+    if (index == 0) {
+      for (int part = 0; part < 5; ++part) {
+        Shapes::Rectangle bar;
+        bar.Width(15);
+        bar.Height(7);
+        bar.RadiusX(3.5);
+        bar.RadiusY(3.5);
+        auto color = AccentColor();
+        color.A = part < 3 ? 255 : 70;
+        bar.Fill(SolidColorBrush(color));
+        Canvas::SetLeft(bar, 5 + 19 * part);
+        Canvas::SetTop(bar, 14);
+        preview.Children().Append(bar);
+      }
+    } else if (index == 1) {
+      Shapes::Ellipse ring;
+      ring.Width(30);
+      ring.Height(30);
+      ring.Stroke(accent);
+      ring.StrokeThickness(5);
+      Canvas::SetLeft(ring, 35);
+      Canvas::SetTop(ring, 2);
+      preview.Children().Append(ring);
+    } else {
+      Shapes::Rectangle frame;
+      frame.Width(66);
+      frame.Height(28);
+      frame.RadiusX(4);
+      frame.RadiusY(4);
+      frame.Stroke(accent);
+      frame.StrokeThickness(3);
+      Canvas::SetLeft(frame, 17);
+      Canvas::SetTop(frame, 3);
+      preview.Children().Append(frame);
+    }
+    body.Children().Append(preview);
+    auto label = MakeText(labels[index], 14);
+    label.FontWeight(Microsoft::UI::Text::FontWeights::SemiBold());
+    label.HorizontalAlignment(HorizontalAlignment::Center);
+    body.Children().Append(label);
+    choice.Content(body);
+    choice.Click([select, index](auto const&, auto const&) { select(index); });
+    Grid::SetColumn(choice, index);
+    grid.Children().Append(choice);
+  }
+  grid.SizeChanged([](IInspectable const& sender, SizeChangedEventArgs const& args) {
+    const auto host = sender.as<Grid>();
+    const bool stacked = args.NewSize().Width < 360;
+    const auto last = host.Children().GetAt(2).as<FrameworkElement>();
+    if (Grid::GetRow(last) == (stacked ? 2 : 0)) return;
+    for (int index = 0; index < 3; ++index) {
+      host.ColumnDefinitions().GetAt(index).Width(
+          GridLengthHelper::FromValueAndType(stacked && index > 0 ? 0 : 1,
+              stacked && index > 0 ? GridUnitType::Pixel : GridUnitType::Star));
+      const auto choice = host.Children().GetAt(index).as<FrameworkElement>();
+      Grid::SetColumn(choice, stacked ? 0 : index);
+      Grid::SetRow(choice, stacked ? index : 0);
+    }
+    host.ColumnSpacing(stacked ? 0 : 10);
+    host.RowSpacing(stacked ? 8 : 0);
+  });
+  return grid;
+}
+
 void SelectSegment(const Grid& grid, int selected) {
   int index = 0;
   for (const auto& child : grid.Children()) {
-    child.as<Primitives::ToggleButton>().IsChecked(index++ == selected);
+    const auto button = child.as<Primitives::ToggleButton>();
+    const bool active = index++ == selected;
+    button.IsChecked(active);
+    if (button.Tag() && unbox_value_or<hstring>(button.Tag(), L"") == L"view-choice") {
+      auto color = AccentColor();
+      color.A = 28;
+      button.Background(active ? SolidColorBrush(color)
+                               : ResourceBrush(L"ControlFillColorDefaultBrush",
+                                               Windows::UI::ColorHelper::FromArgb(12, 128, 128, 128)));
+      button.BorderBrush(active ? SolidColorBrush(AccentColor())
+                                : ResourceBrush(L"ControlStrokeColorDefaultBrush",
+                                                Windows::UI::ColorHelper::FromArgb(64, 128, 128, 128)));
+      button.BorderThickness(Thickness{1, 1, 1, 1});
+      const auto iconBrush = active
+          ? ResourceBrush(L"TextOnAccentFillColorPrimaryBrush",
+                          Windows::UI::ColorHelper::FromArgb(255, 255, 255, 255))
+          : Brush(SolidColorBrush(AccentColor()));
+      const auto body = button.Content().as<StackPanel>();
+      const auto preview = body.Children().GetAt(0).as<Canvas>();
+      int part = 0;
+      for (const auto& element : preview.Children()) {
+        const auto shape = element.as<Shapes::Shape>();
+        if (index == 1) {
+          shape.Fill(iconBrush);
+          shape.Opacity(part++ < 3 ? 1.0 : 0.4);
+        } else {
+          shape.Stroke(iconBrush);
+        }
+      }
+    }
   }
 }
 
@@ -419,6 +553,70 @@ void DrawPreviewChrome(const Canvas& canvas) {
                    kPreviewScreenCenterX + 7}) {
     rect(x, kPreviewScreenTop + kPreviewScreenHeight + 3, 7, 6, PreviewColor(147, 167, 190), 1);
   }
+}
+
+bool DrawScheduleScreenEdge(const Canvas& canvas, double left, double top, double width,
+                            double height, double line, const std::vector<classtime::Segment>& plan,
+                            const classtime::WallClock& now, const WidgetAppearance::Palette& palette) {
+  const auto runs = BuildScreenEdgeRuns(plan, now);
+  if (runs.empty()) return false;
+  const std::array<double, 4> lengths = {width, height - line, width - line, height - 2 * line};
+  const double perimeter = std::accumulate(lengths.begin(), lengths.end(), 0.0);
+  const auto stops = WidgetAppearance::ScreenEdgeColorStops(runs, palette);
+  double sideStart = 0;
+  for (size_t side = 0; side < lengths.size(); ++side) {
+    const double begin = sideStart / perimeter;
+    const double end = (sideStart + lengths[side]) / perimeter;
+    LinearGradientBrush brush;
+    brush.ColorInterpolationMode(ColorInterpolationMode::SRgbLinearInterpolation);
+    const auto addStop = [&](double offset, Windows::UI::Color color) {
+      GradientStop stop;
+      stop.Offset(offset);
+      stop.Color(color);
+      brush.GradientStops().Append(stop);
+    };
+    addStop(0, WidgetAppearance::ScreenEdgeColorAt(stops, begin));
+    for (const auto& stop : stops) {
+      if (stop.position > begin && stop.position < end) {
+        addStop((stop.position - begin) / (end - begin), stop.color);
+      }
+    }
+    addStop(1, WidgetAppearance::ScreenEdgeColorAt(stops, end));
+
+    Shapes::Rectangle shape;
+    shape.Fill(brush);
+    double x = left, y = top;
+    if (side == 0) {
+      brush.StartPoint({0, 0});
+      brush.EndPoint({1, 0});
+      shape.Width(width);
+      shape.Height(line);
+    } else if (side == 1) {
+      x += width - line;
+      y += line;
+      brush.StartPoint({0, 0});
+      brush.EndPoint({0, 1});
+      shape.Width(line);
+      shape.Height(height - line);
+    } else if (side == 2) {
+      y += height - line;
+      brush.StartPoint({1, 0});
+      brush.EndPoint({0, 0});
+      shape.Width(width - line);
+      shape.Height(line);
+    } else {
+      y += line;
+      brush.StartPoint({0, 1});
+      brush.EndPoint({0, 0});
+      shape.Width(line);
+      shape.Height(height - 2 * line);
+    }
+    Canvas::SetLeft(shape, x);
+    Canvas::SetTop(shape, y);
+    canvas.Children().Append(shape);
+    sideStart += lengths[side];
+  }
+  return true;
 }
 
 void DrawPreviewDetail(const Canvas& canvas, const Presentation& presentation,
@@ -480,6 +678,9 @@ void DrawPreviewDetail(const Canvas& canvas, const Presentation& presentation,
   if (presentation.view == Presentation::View::ScreenEdge) {
     constexpr double left = 50, top = 14, width = 320, height = 112;
     const double line = std::clamp(thickness * 0.5, 2.0, 10.0);
+    if (presentation.scope == Presentation::Scope::AllDay &&
+        presentation.screenEdgeColors == Presentation::ScreenEdgeColors::Schedule &&
+        DrawScheduleScreenEdge(canvas, left, top, width, height, line, plan, now, palette)) return;
     const auto track = SolidColorBrush(Windows::UI::ColorHelper::FromArgb(172, 100, 117, 137));
     rect(left, top, width, line, track);
     rect(left + width - line, top + line, line, height - line, track);
@@ -740,10 +941,41 @@ void SettingsWindow::Build() {
   nav_.IsSettingsVisible(false);
   nav_.IsBackButtonVisible(NavigationViewBackButtonVisible::Collapsed);
   nav_.PaneDisplayMode(NavigationViewPaneDisplayMode::Auto);
-  nav_.PaneTitle(L"设置");
-  nav_.OpenPaneLength(216);
+  nav_.PaneTitle(L"");
+  nav_.OpenPaneLength(228);
   nav_.CompactPaneLength(52);
-  nav_.CompactModeThresholdWidth(0);
+  nav_.CompactModeThresholdWidth(560);
+  nav_.ExpandedModeThresholdWidth(900);
+
+  StackPanel brand;
+  brand.Orientation(Orientation::Horizontal);
+  brand.Spacing(11);
+  brand.Margin(Thickness{14, 12, 8, 20});
+  Border brandIcon;
+  brandIcon.Width(40);
+  brandIcon.Height(40);
+  brandIcon.CornerRadius(CornerRadius{11, 11, 11, 11});
+  brandIcon.Background(SolidColorBrush(AccentColor()));
+  SymbolIcon clockIcon;
+  clockIcon.Symbol(Symbol::Clock);
+  clockIcon.Foreground(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 255, 255, 255)));
+  clockIcon.HorizontalAlignment(HorizontalAlignment::Center);
+  clockIcon.VerticalAlignment(VerticalAlignment::Center);
+  brandIcon.Child(clockIcon);
+  Add(brand, brandIcon);
+  StackPanel brandText;
+  brandText.VerticalAlignment(VerticalAlignment::Center);
+  auto brandTitle = MakeText(L"“上课”时间到！", 16);
+  brandTitle.FontWeight(Microsoft::UI::Text::FontWeights::SemiBold());
+  brandTitle.TextWrapping(TextWrapping::NoWrap);
+  Add(brandText, brandTitle);
+  Add(brandText, MakeSubtitle(L"作息与课程管理"));
+  Add(brand, brandText);
+  nav_.PaneHeader(brand);
+
+  auto version = MakeSubtitle(L"ClassTime  ·  v" + std::wstring(kVersion));
+  version.Margin(Thickness{20, 12, 12, 18});
+  nav_.PaneFooter(version);
   root.Children().Append(nav_);
 
   struct Section {
@@ -761,15 +993,20 @@ void SettingsWindow::Build() {
     NavigationViewItem item;
     item.Content(box_value(hstring(section.title)));
     item.Tag(box_value(hstring(section.tag)));
-    SymbolIcon icon;
-    icon.Symbol(section.symbol);
-    item.Icon(icon);
-    if (std::wstring(section.tag) == L"general") nav_.FooterMenuItems().Append(item);
-    else nav_.MenuItems().Append(item);
+    if (std::wstring(section.tag) == L"notifications" || std::wstring(section.tag) == L"display") {
+      FontIcon icon;
+      icon.Glyph(std::wstring(section.tag) == L"notifications" ? L"\uEA8F" : L"\uE7F4");
+      item.Icon(icon);
+    } else {
+      SymbolIcon icon;
+      icon.Symbol(section.symbol);
+      item.Icon(icon);
+    }
+    nav_.MenuItems().Append(item);
   }
 
   auto content = Grid();
-  content.Margin(Thickness{24, 16, 24, 24});
+  content.Margin(Thickness{28, 32, 28, 24});
   nav_.Content(content);
 
   auto makePage = [&](ScrollViewer& scroll) {
@@ -779,7 +1016,7 @@ void SettingsWindow::Build() {
     viewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
     viewer.HorizontalContentAlignment(HorizontalAlignment::Stretch);
     auto stack = StackPanel();
-    stack.MaxWidth(980);
+    stack.MaxWidth(1100);
     stack.Spacing(16);
     viewer.Content(stack);
     content.Children().Append(viewer);
@@ -797,7 +1034,7 @@ void SettingsWindow::Build() {
   Add(scheduleStack, scheduleNotice_);
 
   {
-    // 页首：标题与说明在左，当前节次与今天日期徽标在右（同一时间引擎取值）。
+    // 页首保留当前状态，并把新增入口放在最容易找到的位置。
     auto header = Grid();
     auto headerLeft = ColumnDefinition();
     headerLeft.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
@@ -808,7 +1045,7 @@ void SettingsWindow::Build() {
     auto titles = StackPanel();
     titles.Spacing(4);
     Add(titles, MakeSectionTitle(L"作息计划"));
-    Add(titles, MakeSubtitle(L"高中与大学作息模板；可编辑课间和午休，时间按真实时钟前进。"));
+    Add(titles, MakeSubtitle(L"管理一周的作息安排，包括上课、课间与午休。"));
     Grid::SetColumn(titles, 0);
     header.Children().Append(titles);
     auto chips = StackPanel();
@@ -823,8 +1060,23 @@ void SettingsWindow::Build() {
     dateChip.Child(scheduleDateText_);
     Add(chips, nowChip);
     Add(chips, dateChip);
-    Grid::SetColumn(chips, 1);
-    header.Children().Append(chips);
+    Add(titles, chips);
+    auto add = Button();
+    StackPanel addLabel;
+    addLabel.Orientation(Orientation::Horizontal);
+    addLabel.Spacing(8);
+    SymbolIcon addIcon;
+    addIcon.Symbol(Symbol::Add);
+    addIcon.VerticalAlignment(VerticalAlignment::Center);
+    Add(addLabel, addIcon);
+    Add(addLabel, MakeText(L"新增时段", 14));
+    add.Content(addLabel);
+    Automation::AutomationProperties::SetName(add, L"新增时段");
+    add.VerticalAlignment(VerticalAlignment::Top);
+    StyleAction(add, true);
+    add.Click([this](auto const&, auto const&) { OpenNewEditor(); });
+    Grid::SetColumn(add, 1);
+    header.Children().Append(add);
     Add(scheduleStack, header);
   }
 
@@ -857,13 +1109,19 @@ void SettingsWindow::Build() {
     addTemplate.Click([this](auto const&, auto const&) { ShowAddTemplateDialog(); });
     Grid::SetColumn(addTemplate, 2);
     templateRow.Children().Append(addTemplate);
-    Add(stack, templateRow);
+    planScope_ = RadioButtons();
+    planScope_.MaxColumns(2);
+    planScope_.Items().Append(box_value(L"常规模板"));
+    planScope_.Items().Append(box_value(L"今天的计划"));
+    planScope_.SelectedIndex(0);
+    Automation::AutomationProperties::SetName(planScope_, L"查看的作息计划");
+    Add(stack, MakeAdaptiveColumns(templateRow, planScope_, 270, 650));
 
     templateStatus_ = MakeSubtitle(L"");
     Add(stack, templateStatus_);
 
     Expander templateDetails;
-    templateDetails.Header(box_value(L"模板名称与生效星期"));
+    templateDetails.Header(box_value(L"修改模板名称"));
     templateDetails.HorizontalAlignment(HorizontalAlignment::Stretch);
     templateDetails.HorizontalContentAlignment(HorizontalAlignment::Stretch);
     StackPanel templateFields;
@@ -876,28 +1134,23 @@ void SettingsWindow::Build() {
     Add(templateFields, templateNameBox_);
     Add(templateFields, MakeSubtitle(L"修改名称后自动保存。"));
 
-    Add(templateFields, MakeText(L"生效星期", 14));
-    weekdayPanel_ = VariableSizedWrapGrid();
-    weekdayPanel_.Orientation(Orientation::Horizontal);
-    weekdayPanel_.ItemWidth(52);
-    weekdayPanel_.ItemHeight(34);
-    Add(templateFields, weekdayPanel_);
     templateDetails.Content(templateFields);
     Add(stack, templateDetails);
+
+    auto weekdayHeading = MakeText(L"生效星期", 14);
+    weekdayHeading.FontWeight(Microsoft::UI::Text::FontWeights::SemiBold());
+    Add(stack, weekdayHeading);
+    weekdayPanel_ = VariableSizedWrapGrid();
+    weekdayPanel_.Orientation(Orientation::Horizontal);
+    weekdayPanel_.ItemWidth(80);
+    weekdayPanel_.ItemHeight(34);
+    Add(stack, weekdayPanel_);
     card.Child(stack);
 
     auto editingCard = MakeCard();
     auto editingStack = StackPanel();
     editingStack.Spacing(12);
-    Add(editingStack, MakeCardTitle(L"编辑作息"));
-
-    planScope_ = RadioButtons();
-    planScope_.MaxColumns(2);
-    planScope_.Items().Append(box_value(L"常规模板"));
-    planScope_.Items().Append(box_value(L"今天的计划"));
-    planScope_.SelectedIndex(0);
-    Automation::AutomationProperties::SetName(planScope_, L"查看的作息计划");
-    Add(editingStack, planScope_);
+    Add(editingStack, MakeCardTitle(L"时段安排"));
 
     timetableScroll_ = ScrollViewer();
     timetableScroll_.HorizontalScrollMode(ScrollMode::Enabled);
@@ -912,10 +1165,6 @@ void SettingsWindow::Build() {
 
     auto buttons = StackPanel();
     buttons.Spacing(8);
-    auto add = Button();
-    add.Content(box_value(hstring(L"新增时段")));
-    StyleAction(add, true);
-    add.Click([this](auto const&, auto const&) { OpenNewEditor(); });
     restorePresetButton_ = Button();
     restorePresetButton_.Content(box_value(hstring(L"恢复默认...")));
     StyleAction(restorePresetButton_, false, true);
@@ -929,16 +1178,19 @@ void SettingsWindow::Build() {
       ShowScheduleNotice(L"已撤销今天的临时调整，恢复按常规模板执行。");
       RefreshAll();
     });
-    Add(buttons, add);
     Add(buttons, restorePresetButton_);
     Add(buttons, clearTodayButton_);
     BindActionRow(buttons, 350);
     Add(editingStack, buttons);
+    Add(editingStack, segmentList_);
 
-    // —— 作息时间轴：类剪辑软件的水平刻度条，拖动直接改时间与时长 ——
-    Add(editingStack, MakeDivider());
-    Add(editingStack, MakeCardTitle(L"时间轴"));
-    Add(editingStack, MakeSubtitle(L"拖动时段或两端调整时间；双击时段编辑，双击空白处新增。"));
+    // 时间轴和周视图仍可展开编辑，列表优先展示日常作息。
+    Expander timelineExpander;
+    timelineExpander.Header(box_value(L"时间轴 · 拖动调整时段"));
+    timelineExpander.HorizontalContentAlignment(HorizontalAlignment::Stretch);
+    StackPanel timelineStack;
+    timelineStack.Spacing(10);
+    Add(timelineStack, MakeSubtitle(L"拖动时段或两端调整时间；双击时段编辑，双击空白处新增。"));
     auto zoomRow = Grid();
     zoomRow.Children().Append(MakeText(L"缩放", 14));
     timelineZoomSlider_ = Slider();
@@ -957,7 +1209,7 @@ void SettingsWindow::Build() {
     zoomRow.ColumnDefinitions().Append(zoomColumn);
     zoomRow.ColumnSpacing(12);
     zoomRow.Children().Append(timelineZoomSlider_);
-    Add(editingStack, zoomRow);
+    Add(timelineStack, zoomRow);
 
     auto snapRow = StackPanel();
     snapRow.Orientation(Orientation::Horizontal);
@@ -971,7 +1223,7 @@ void SettingsWindow::Build() {
     timelineSnapCombo_.Items().Append(box_value(L"15 分钟"));
     Automation::AutomationProperties::SetName(timelineSnapCombo_, L"时间轴拖动步进");
     Add(snapRow, timelineSnapCombo_);
-    Add(editingStack, snapRow);
+    Add(timelineStack, snapRow);
 
     timelineScroll_ = ScrollViewer();
     timelineScroll_.HorizontalScrollMode(ScrollMode::Enabled);
@@ -992,12 +1244,16 @@ void SettingsWindow::Build() {
       window_.DispatcherQueue().TryEnqueue([this] { PositionTimelineInitially(); });
     });
     timelineScroll_.SizeChanged([this](auto const&, auto const&) { PositionTimelineInitially(); });
-    Add(editingStack, timelineScroll_);
+    Add(timelineStack, timelineScroll_);
     timelineStatusText_ = MakeSubtitle(L"");
-    Add(editingStack, timelineStatusText_);
-    Add(editingStack, timetableScroll_);
-    Add(editingStack, MakeCardTitle(L"时段列表"));
-    Add(editingStack, segmentList_);
+    Add(timelineStack, timelineStatusText_);
+    timelineExpander.Content(timelineStack);
+    Add(editingStack, timelineExpander);
+    Expander timetableExpander;
+    timetableExpander.Header(box_value(L"课表预览"));
+    timetableExpander.HorizontalContentAlignment(HorizontalAlignment::Stretch);
+    timetableExpander.Content(timetableScroll_);
+    Add(editingStack, timetableExpander);
 
     editingCard.Child(editingStack);
     auto mainStack = StackPanel();
@@ -1005,16 +1261,14 @@ void SettingsWindow::Build() {
     Add(mainStack, card);
     Add(mainStack, editingCard);
 
-    auto overviewCard = MakeCard();
-    overviewCard.Padding(Thickness{14, 14, 14, 14});
-    auto overviewStack = StackPanel();
-    overviewStack.Spacing(10);
-    Add(overviewStack, MakeCardTitle(L"今日概览"));
+    Expander overview;
+    overview.Header(box_value(L"今日概览"));
+    overview.HorizontalContentAlignment(HorizontalAlignment::Stretch);
     todayOverview_ = StackPanel();
     todayOverview_.Spacing(6);
-    Add(overviewStack, todayOverview_);
-    overviewCard.Child(overviewStack);
-    Add(scheduleStack, MakeAdaptiveColumns(mainStack, overviewCard, 300, 902));
+    overview.Content(todayOverview_);
+    Add(mainStack, overview);
+    Add(scheduleStack, mainStack);
   }
 
   // —— 显示与位置 ——
@@ -1038,7 +1292,7 @@ void SettingsWindow::Build() {
   auto displayHeading = StackPanel();
   displayHeading.Spacing(4);
   Add(displayHeading, MakeSectionTitle(L"显示与位置"));
-  Add(displayHeading, MakeSubtitle(L"先看效果，再调整组件的样式和位置。"));
+  Add(displayHeading, MakeSubtitle(L"调整桌面组件的显示样式、显示范围与位置。"));
   displayPage.Children().Append(displayHeading);
   Grid displayWorkspace;
   Grid::SetRow(displayWorkspace, 1);
@@ -1046,17 +1300,15 @@ void SettingsWindow::Build() {
   displayScroll_.Content(displayPage);
   content.Children().Append(displayScroll_);
   {
-    // 预览始终位于可见区域；仅设置栏滚动，窄窗口改为上下布局。
-    auto card = MakeCard();
-    card.Padding(Thickness{18, 18, 18, 18});
-    auto stack = StackPanel();
-    stack.Spacing(10);
-
-    Add(stack, MakeCardTitle(L"组件样式"));
-    visibleToggle_ = ToggleSwitch();
-    Add(stack, MakeToggleRow(visibleToggle_, L"显示桌面组件"));
-    Add(stack, MakeText(L"显示形式", 14));
-    Add(stack, MakeSegments(viewSegments_, {L"分节长条", L"圆环", L"屏幕边框"}, [this](int index) {
+    // 实时预览固定在上方，下面的设置独立滚动。
+    StackPanel settingsContent;
+    settingsContent.Spacing(12);
+    auto viewCard = MakeCard();
+    StackPanel viewStack;
+    viewStack.Spacing(10);
+    Add(viewStack, MakeCardTitle(L"显示形式"));
+    Add(viewStack, MakeSubtitle(L"选择桌面组件的样式。"));
+    Add(viewStack, MakeViewChoices(viewSegments_, [this](int index) {
       SelectSegment(viewSegments_, index);
       constexpr Presentation::View views[] = {
           Presentation::View::Bar, Presentation::View::Ring, Presentation::View::ScreenEdge};
@@ -1065,6 +1317,13 @@ void SettingsWindow::Build() {
       presentation.view = views[index];
       Services::Instance().UpdatePresentation(presentation);
     }));
+    viewCard.Child(viewStack);
+    Add(settingsContent, viewCard);
+
+    auto card = MakeCard();
+    auto stack = StackPanel();
+    stack.Spacing(10);
+    Add(stack, MakeCardTitle(L"显示设置"));
     Add(stack, MakeText(L"显示范围", 14));
     Add(stack, MakeSegments(scopeSegments_, {L"全天", L"当前时段"}, [this](int index) {
       SelectSegment(scopeSegments_, index);
@@ -1075,17 +1334,17 @@ void SettingsWindow::Build() {
       Services::Instance().UpdatePresentation(presentation);
     }));
 
-    auto sectionDivider = MakeDivider();
-    sectionDivider.Margin(Thickness{0, 8, 0, 6});
-    Add(stack, sectionDivider);
-    Add(stack, MakeCardTitle(L"屏幕与位置"));
+    auto locationCard = MakeCard();
+    auto locationStack = StackPanel();
+    locationStack.Spacing(10);
+    Add(locationStack, MakeCardTitle(L"位置设置"));
     monitorCombo_ = ComboBox();
     monitorCombo_.Header(box_value(L"组件所在显示器"));
     monitorCombo_.HorizontalAlignment(HorizontalAlignment::Stretch);
     Automation::AutomationProperties::SetName(monitorCombo_, L"组件所在显示器");
-    Add(stack, monitorCombo_);
+    Add(locationStack, monitorCombo_);
     monitorHint_ = MakeSubtitle(L"");
-    Add(stack, monitorHint_);
+    Add(locationStack, monitorHint_);
 
     screenEdgeControls_ = StackPanel();
     screenEdgeControls_.Spacing(4);
@@ -1101,7 +1360,22 @@ void SettingsWindow::Build() {
     screenEdgeSlider_.StepFrequency(1);
     Automation::AutomationProperties::SetName(screenEdgeSlider_, L"边框粗细");
     Add(screenEdgeControls_, screenEdgeSlider_);
-    Add(screenEdgeControls_, MakeSubtitle(L"鼠标可穿过边框。全天范围按首段到末段推进，颜色随当前时段变化。"));
+    Add(screenEdgeControls_, MakeSubtitle(L"鼠标可穿过边框，全天进度从首段开始到末段结束。"));
+    screenEdgeColorPanel_ = StackPanel();
+    screenEdgeColorPanel_.Spacing(6);
+    Add(screenEdgeColorPanel_, MakeText(L"全天配色", 14));
+    Add(screenEdgeColorPanel_, MakeSegments(screenEdgeColorSegments_,
+        {L"按时段分色", L"跟随当前时段"}, [this](int index) {
+          SelectSegment(screenEdgeColorSegments_, index);
+          const auto colors = index == 0 ? Presentation::ScreenEdgeColors::Schedule
+                                         : Presentation::ScreenEdgeColors::CurrentState;
+          auto presentation = Services::Instance().config().presentation;
+          if (presentation.screenEdgeColors == colors) return;
+          presentation.screenEdgeColors = colors;
+          Services::Instance().UpdatePresentation(presentation);
+        }));
+    Add(screenEdgeColorPanel_, MakeSubtitle(L"分色按各时段的实际时长排列，较浅部分尚未到达。"));
+    Add(screenEdgeControls_, screenEdgeColorPanel_);
 
     dockControls_ = StackPanel();
     dockControls_.Spacing(10);
@@ -1118,10 +1392,6 @@ void SettingsWindow::Build() {
       presentation.edge = edge;
       Services::Instance().UpdatePresentation(presentation);
     }));
-    edgeAutoHideToggle_ = ToggleSwitch();
-    Add(dockControls_, MakeToggleRow(edgeAutoHideToggle_, L"贴边自动隐藏", L"悬停时展开组件"));
-    flushToggle_ = ToggleSwitch();
-    Add(dockControls_, MakeToggleRow(flushToggle_, L"紧贴边缘", L"关闭后保留一点间距"));
     reanchorButton_ = Button();
     reanchorButton_.Content(box_value(hstring(L"恢复居中位置")));
     StyleAction(reanchorButton_, false, true);
@@ -1161,7 +1431,7 @@ void SettingsWindow::Build() {
       Services::Instance().UpdatePresentation(presentation);
     });
     Add(barLengthPanel_, resetBarLength);
-    Add(dockControls_, barLengthPanel_);
+    Add(stack, barLengthPanel_);
 
     barColorPanel_ = StackPanel();
     barColorPanel_.Spacing(4);
@@ -1174,7 +1444,7 @@ void SettingsWindow::Build() {
     barColorPicker_.Visibility(Visibility::Collapsed);
     Automation::AutomationProperties::SetName(barColorPicker_, L"长条背景颜色");
     Add(barColorPanel_, barColorPicker_);
-    Add(dockControls_, barColorPanel_);
+    Add(stack, barColorPanel_);
 
     // 两种形式各自需要的贴边选项放在同一个宿主里：切换时宿主高度做补间，
     // 下面的开关就不会被瞬间顶开或吸上。
@@ -1190,24 +1460,49 @@ void SettingsWindow::Build() {
       const auto size = args.NewSize();
       displayOptionsClip_.Rect({0.0f, 0.0f, size.Width, size.Height});
     });
-    Add(stack, displayOptionsHost_);
+    Add(locationStack, displayOptionsHost_);
 
     card.Child(stack);
+    locationCard.Child(locationStack);
+    Add(settingsContent, MakeAdaptiveColumns(card, locationCard, 400, 820));
+
+    auto behaviorCard = MakeCard();
+    StackPanel behaviorStack;
+    behaviorStack.Spacing(10);
+    Add(behaviorStack, MakeCardTitle(L"行为设置"));
+    visibleToggle_ = ToggleSwitch();
+    Add(behaviorStack, MakeToggleRow(visibleToggle_, L"显示桌面组件"));
+    dockBehavior_ = StackPanel();
+    dockBehavior_.Spacing(10);
+    flushToggle_ = ToggleSwitch();
+    Add(dockBehavior_, MakeToggleRow(flushToggle_, L"紧贴边缘", L"关闭后保留一点间距"));
+    edgeAutoHideToggle_ = ToggleSwitch();
+    Add(dockBehavior_, MakeToggleRow(edgeAutoHideToggle_, L"贴边自动隐藏", L"鼠标靠近时展开组件"));
+    Add(behaviorStack, dockBehavior_);
+    behaviorCard.Child(behaviorStack);
+    Add(settingsContent, behaviorCard);
 
     // 大幅预览与引擎状态摘要保持在页面前方。
     auto previewCard = MakeCard();
-    previewCard.Padding(Thickness{18, 18, 18, 18});
+    previewCard.Padding(Thickness{16, 12, 16, 12});
     previewCard.VerticalAlignment(VerticalAlignment::Top);
     auto previewContent = StackPanel();
-    previewContent.Spacing(8);
+    previewContent.Spacing(6);
     Add(previewContent, MakeCardTitle(L"实时预览"));
-    Add(previewContent, MakeSubtitle(L"与当前作息和组件设置同步"));
+    Grid previewVisuals;
+    ColumnDefinition detailColumn;
+    detailColumn.Width(GridLengthHelper::FromValueAndType(3, GridUnitType::Star));
+    ColumnDefinition positionColumn;
+    positionColumn.Width(GridLengthHelper::FromValueAndType(2, GridUnitType::Star));
+    previewVisuals.ColumnDefinitions().Append(detailColumn);
+    previewVisuals.ColumnDefinitions().Append(positionColumn);
+    previewVisuals.ColumnSpacing(12);
     previewDetail_ = Canvas();
     previewDetail_.Width(420);
     previewDetail_.Height(140);
     previewDetail_.IsHitTestVisible(false);
     Viewbox previewDetailScale;
-    previewDetailScale.MaxHeight(140);
+    previewDetailScale.MaxHeight(84);
     previewDetailScale.HorizontalAlignment(HorizontalAlignment::Stretch);
     previewDetailScale.Child(previewDetail_);
     Border previewDetailFrame;
@@ -1215,10 +1510,8 @@ void SettingsWindow::Build() {
     previewDetailFrame.Background(ResourceBrush(L"SubtleFillColorSecondaryBrush",
                                                Windows::UI::ColorHelper::FromArgb(20, 128, 128, 128)));
     previewDetailFrame.Child(previewDetailScale);
-    Add(previewContent, previewDetailFrame);
+    previewVisuals.Children().Append(previewDetailFrame);
     previewSummaryText_ = MakeSubtitle(L"");
-    Add(previewContent, previewSummaryText_);
-    Add(previewContent, MakeText(L"屏幕位置", 13));
     displayPreview_ = Canvas();
     displayPreview_.Width(kPreviewWidth);
     displayPreview_.Height(kPreviewHeight);
@@ -1250,11 +1543,14 @@ void SettingsWindow::Build() {
     motionSurface.Children().Append(previewStageB_);
     displayPreview_.Children().Append(motionSurface);
     Viewbox previewScale;
-    previewScale.MaxHeight(112);
+    previewScale.MaxHeight(84);
     previewScale.HorizontalAlignment(HorizontalAlignment::Stretch);
     previewScale.Child(displayPreview_);
-    Add(previewContent, previewScale);
-    Add(previewContent, MakeSubtitle(L"位置为缩放示意；自动隐藏时悬停查看展开效果。"));
+    Grid::SetColumn(previewScale, 1);
+    previewVisuals.Children().Append(previewScale);
+    Add(previewContent, previewVisuals);
+    Add(previewContent, previewSummaryText_);
+    ToolTipService::SetToolTip(previewCard, box_value(L"位置为缩放示意；自动隐藏时悬停查看展开效果。"));
     previewCard.Child(previewContent);
     previewCard.PointerEntered([this](auto const&, auto const&) {
       previewHovered_ = true;
@@ -1276,87 +1572,91 @@ void SettingsWindow::Build() {
     settingsPane.HorizontalScrollMode(ScrollMode::Disabled);
     settingsPane.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
     settingsPane.HorizontalContentAlignment(HorizontalAlignment::Stretch);
-    settingsPane.Content(card);
+    settingsPane.Content(settingsContent);
 
-    ColumnDefinition previewColumn;
-    ColumnDefinition controlsColumn;
-    previewColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-    controlsColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-    displayWorkspace.ColumnDefinitions().Append(previewColumn);
-    displayWorkspace.ColumnDefinitions().Append(controlsColumn);
     RowDefinition firstRow;
     RowDefinition secondRow;
-    firstRow.Height(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-    secondRow.Height(GridLengthHelper::FromValueAndType(0, GridUnitType::Pixel));
+    firstRow.Height(GridLengthHelper::Auto());
+    secondRow.Height(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
     displayWorkspace.RowDefinitions().Append(firstRow);
     displayWorkspace.RowDefinitions().Append(secondRow);
-    displayWorkspace.ColumnSpacing(16);
-    Grid::SetColumn(settingsPane, 1);
+    displayWorkspace.RowSpacing(12);
+    Grid::SetRow(settingsPane, 1);
     displayWorkspace.Children().Append(previewCard);
     displayWorkspace.Children().Append(settingsPane);
-    displayWorkspace.SizeChanged([previewCard, settingsPane, previewColumn, controlsColumn,
-                                   firstRow, secondRow, previewScale, previewDetailScale](auto const& sender,
-                                                                    SizeChangedEventArgs const& args) {
-      const bool stacked = args.NewSize().Width < 820;
-      const auto host = sender.template as<Grid>();
-      Grid::SetColumn(settingsPane, stacked ? 0 : 1);
-      Grid::SetRow(settingsPane, stacked ? 1 : 0);
-      previewColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-      controlsColumn.Width(GridLengthHelper::FromValueAndType(stacked ? 0 : 1,
-                                      stacked ? GridUnitType::Pixel : GridUnitType::Star));
-      firstRow.Height(stacked ? GridLengthHelper::Auto()
-                              : GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-      secondRow.Height(GridLengthHelper::FromValueAndType(stacked ? 1 : 0,
-                                      stacked ? GridUnitType::Star : GridUnitType::Pixel));
-      host.ColumnSpacing(stacked ? 0 : 16);
-      host.RowSpacing(stacked ? 12 : 0);
-      previewDetailScale.MaxHeight(stacked ? 90 : 140);
-      previewScale.MaxHeight(stacked ? 68 : 112);
-    });
   }
 
   // —— 通知 ——
   auto notificationsStack = makePage(notificationsScroll_);
   Add(notificationsStack, MakeSectionTitle(L"通知"));
-  Add(notificationsStack,
-      MakeSubtitle(L"选择哪些时段切换需要提醒，并检查系统通知权限。"));
   {
-    // 左栏提醒状态，右栏系统权限与测试；窄窗口时纵向堆叠。
+    StackPanel hero;
+    hero.Spacing(6);
+    hero.HorizontalAlignment(HorizontalAlignment::Center);
+    Border heroIcon;
+    heroIcon.Width(64);
+    heroIcon.Height(64);
+    heroIcon.CornerRadius(CornerRadius{16, 16, 16, 16});
+    auto iconTint = AccentColor();
+    iconTint.A = 30;
+    heroIcon.Background(SolidColorBrush(iconTint));
+    heroIcon.HorizontalAlignment(HorizontalAlignment::Center);
+    FontIcon bell;
+    bell.Glyph(L"\uEA8F");
+    bell.FontSize(29);
+    bell.Foreground(SolidColorBrush(AccentColor()));
+    bell.HorizontalAlignment(HorizontalAlignment::Center);
+    bell.VerticalAlignment(VerticalAlignment::Center);
+    heroIcon.Child(bell);
+    Add(hero, heroIcon);
+    auto heroTitle = MakeText(L"作息提醒", 22);
+    heroTitle.FontWeight(Microsoft::UI::Text::FontWeights::SemiBold());
+    heroTitle.HorizontalAlignment(HorizontalAlignment::Center);
+    Add(hero, heroTitle);
+    auto heroSubtitle = MakeSubtitle(L"在合适的时间开始工作与休息。");
+    heroSubtitle.HorizontalAlignment(HorizontalAlignment::Center);
+    Add(hero, heroSubtitle);
+    notificationStateText_ = MakeText(L"", 13);
+    notificationStateText_.TextAlignment(TextAlignment::Center);
+    Add(hero, notificationStateText_);
+    Add(notificationsStack, hero);
+
     auto card = MakeCard();
     auto stack = StackPanel();
     stack.Spacing(10);
-
-    Add(stack, MakeCardTitle(L"提醒状态"));
-    notificationStateText_ = MakeText(L"", 14);
-    Add(stack, notificationStateText_);
-
     notificationsToggle_ = ToggleSwitch();
-    Add(stack, MakeToggleRow(notificationsToggle_, L"启用时段提醒"));
-    muteToggle_ = ToggleSwitch();
-    Add(stack, MakeToggleRow(muteToggle_, L"临时暂停提醒", L"暂停期间，时间和进度照常运行"));
-
+    Add(stack, MakeToggleRow(notificationsToggle_, L"启用作息提醒",
+                             L"根据作息计划在关键时间点发送系统通知。", L"\uEA8F"));
     Add(stack, MakeDivider());
-    Add(stack, MakeCardTitle(L"提醒类型"));
-    focusToggle_ = ToggleSwitch();
-    Add(stack, MakeToggleRow(focusToggle_, L"上课开始与结束"));
-    restToggle_ = ToggleSwitch();
-    Add(stack, MakeToggleRow(restToggle_, L"课间开始与结束"));
-    lunchToggle_ = ToggleSwitch();
-    Add(stack, MakeToggleRow(lunchToggle_, L"午休开始与结束"));
-
-    Add(stack, MakeSubtitle(L"通知遵循 Windows 的静音与勿扰设置。"));
-
+    muteToggle_ = ToggleSwitch();
+    Add(stack, MakeToggleRow(muteToggle_, L"临时暂停提醒",
+                             L"暂停期间不再发送通知，但作息进度会继续运行。", L"\uE769"));
     card.Child(stack);
+    Add(notificationsStack, card);
 
+    Add(notificationsStack, MakeCardTitle(L"提醒时机"));
+    auto timingCard = MakeCard();
+    StackPanel timingStack;
+    timingStack.Spacing(8);
+    focusToggle_ = ToggleSwitch();
+    Add(timingStack, MakeToggleRow(focusToggle_, L"上课开始与结束", L"", L"\uE7BE"));
+    Add(timingStack, MakeDivider());
+    restToggle_ = ToggleSwitch();
+    Add(timingStack, MakeToggleRow(restToggle_, L"课间开始与结束", L"", L"\uEC32"));
+    Add(timingStack, MakeDivider());
+    lunchToggle_ = ToggleSwitch();
+    Add(timingStack, MakeToggleRow(lunchToggle_, L"午休开始与结束", L"", L"\uE708"));
+    timingCard.Child(timingStack);
+    Add(notificationsStack, timingCard);
+
+    Add(notificationsStack, MakeCardTitle(L"系统通知"));
     auto checkCard = MakeCard();
-    checkCard.Padding(Thickness{14, 14, 14, 14});
-    checkCard.VerticalAlignment(VerticalAlignment::Top);
     auto checkStack = StackPanel();
     checkStack.Spacing(10);
-    Add(checkStack, MakeCardTitle(L"系统通知"));
-    Add(checkStack, MakeText(L"Windows 系统权限", 14));
+    Add(checkStack, MakeCardTitle(L"Windows 通知权限"));
     permissionValueText_ = MakeSubtitle(L"");
     Add(checkStack, permissionValueText_);
+    Add(checkStack, MakeDivider());
 
     auto buttons = StackPanel();
     buttons.Spacing(8);
@@ -1381,12 +1681,12 @@ void SettingsWindow::Build() {
     Add(buttons, open);
     Add(checkStack, buttons);
 
-    Add(checkStack, MakeText(L"最近一次发送结果", 14));
     testResultText_ = MakeSubtitle(L"尚未发送测试通知。");
     Add(checkStack, testResultText_);
+    Add(checkStack, MakeSubtitle(L"系统是否显示横幅取决于 Windows 的通知与勿扰设置。"));
 
     checkCard.Child(checkStack);
-    Add(notificationsStack, MakeAdaptiveColumns(card, checkCard, 280, 700));
+    Add(notificationsStack, checkCard);
   }
 
   // —— 常规 ——
@@ -2038,7 +2338,7 @@ void SettingsWindow::Build() {
   cancel.Click([this](auto const&, auto const&) { CloseEditor(); });
 
   // 星期
-  const wchar_t* names[] = {L"一", L"二", L"三", L"四", L"五", L"六", L"日"};
+  const wchar_t* names[] = {L"周一", L"周二", L"周三", L"周四", L"周五", L"周六", L"周日"};
   for (int day = 1; day <= 7; ++day) {
     CheckBox box;
     box.Content(box_value(hstring(names[day - 1])));
@@ -2184,13 +2484,31 @@ void SettingsWindow::RefreshSegments() {
     Add(segmentList_, emptyRow);
   }
   int ordinal = 0;
+  std::wstring previousGroup;
   for (const auto& segment : sorted) {
     if (segment.kind == classtime::SegmentKind::Focus) ++ordinal;
 
+    const auto group = segment.kind == classtime::SegmentKind::Lunch ? std::wstring(L"午休")
+                     : segment.start.hour < 12 ? std::wstring(L"上午")
+                     : segment.start.hour < 18 ? std::wstring(L"下午")
+                                               : std::wstring(L"晚上");
+    if (group != previousGroup) {
+      auto heading = MakeText(group, 14, SolidColorBrush(SegmentColor(segment.kind)));
+      heading.FontWeight(Microsoft::UI::Text::FontWeights::SemiBold());
+      heading.Margin(Thickness{2, previousGroup.empty() ? 2.0 : 14.0, 0, 3});
+      Add(segmentList_, heading);
+      previousGroup = group;
+    }
+
     auto row = Border();
-    row.CornerRadius(CornerRadius{6, 6, 6, 6});
-    row.Padding(Thickness{10, 6, 10, 6});
-    row.Background(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)));
+    row.CornerRadius(CornerRadius{9, 9, 9, 9});
+    row.Padding(Thickness{12, 8, 12, 8});
+    auto rowColor = SegmentColor(segment.kind);
+    rowColor.A = 18;
+    row.Background(SolidColorBrush(rowColor));
+    rowColor.A = 48;
+    row.BorderBrush(SolidColorBrush(rowColor));
+    row.BorderThickness(Thickness{1, 1, 1, 1});
 
     auto grid = Grid();
     auto colBadge = ColumnDefinition();
@@ -2227,6 +2545,7 @@ void SettingsWindow::RefreshSegments() {
     text.VerticalAlignment(VerticalAlignment::Center);
     text.Spacing(1);
     auto name = MakeText(ToWide(segment.label), 14);
+    name.FontWeight(Microsoft::UI::Text::FontWeights::SemiBold());
     auto detail = MakeSubtitle(FormatRange(segment) + L" · " + FormatMinutes(segment.DurationMinutes()));
     text.Children().Append(name);
     text.Children().Append(detail);
@@ -2641,6 +2960,10 @@ void SettingsWindow::RefreshDisplayControls() {
   const bool screenEdge = presentation.view == View::ScreenEdge;
   SelectSegment(viewSegments_, screenEdge ? 2 : (presentation.view == View::Ring ? 1 : 0));
   SelectSegment(scopeSegments_, presentation.scope == Presentation::Scope::AllDay ? 0 : 1);
+  SelectSegment(screenEdgeColorSegments_,
+                presentation.screenEdgeColors == Presentation::ScreenEdgeColors::Schedule ? 0 : 1);
+  screenEdgeColorPanel_.Visibility(presentation.scope == Presentation::Scope::AllDay
+                                      ? Visibility::Visible : Visibility::Collapsed);
   const int edgeIndex = presentation.edge == Presentation::Edge::Top ? 0
                         : presentation.edge == Presentation::Edge::Bottom ? 1
                         : presentation.edge == Presentation::Edge::Left ? 2
@@ -2652,6 +2975,7 @@ void SettingsWindow::RefreshDisplayControls() {
   visibleToggle_.IsOn(presentation.visible);
   edgeAutoHideToggle_.IsOn(presentation.autoHideAtEdge);
   flushToggle_.IsOn(presentation.flushWithEdge);
+  dockBehavior_.Visibility(screenEdge ? Visibility::Collapsed : Visibility::Visible);
 
   // 长条长度与背景色：只对分节长条有意义；取色器在程序化赋值时由 syncing_ 屏蔽。
   const bool wasSyncing = std::exchange(syncing_, true);
@@ -2877,6 +3201,7 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation
       last.monitorId == presentation.monitorId &&
       last.autoHideAtEdge == presentation.autoHideAtEdge &&
       last.flushWithEdge == presentation.flushWithEdge &&
+      last.screenEdgeColors == presentation.screenEdgeColors &&
       last.barLengthDip == presentation.barLengthDip &&
       last.barBackground == presentation.barBackground && latest.expanded == expanded &&
       latest.thickness == thickness && previewStateSignature_ == stateSignature) return;
@@ -2981,6 +3306,10 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation
   const bool flush = presentation.flushWithEdge;
   if (presentation.view == View::ScreenEdge) {
     const double line = thickness * 0.58;
+    if (allDay && presentation.screenEdgeColors == Presentation::ScreenEdgeColors::Schedule &&
+        DrawScheduleScreenEdge(target, left, top, width, height, line, plan.segments, now, palette)) {
+      return;
+    }
     rect(left, top, width, line, track);
     rect(left + width - line, top + line, line, height - line, track);
     rect(left, top + height - line, width - line, line, track);

@@ -1,4 +1,4 @@
-// 托盘图标：Shell_NotifyIcon + 原生菜单，关闭设置窗口后仍可恢复悬浮窗与退出。
+// 托盘图标：Shell_NotifyIcon + WinUI 原生菜单，关闭设置窗口后仍可恢复悬浮窗与退出。
 #pragma once
 
 #include "classtime/config.h"
@@ -34,6 +34,9 @@ class TrayIcon {
   static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   LRESULT HandleMessage(UINT message, WPARAM wparam, LPARAM lparam);
   void ShowMenu();
+  void ShowFallbackMenu();
+  void EnsureMenuWindow();
+  void OpenMenuFlyout();
   void AddIcon();
 
   HINSTANCE instance_ = nullptr;
@@ -46,6 +49,13 @@ class TrayIcon {
   std::wstring tooltip_ = L"“上课”时间到！";
   classtime::PresentationSettings presentation_;
   bool muted_ = false;
+  winrt::Microsoft::UI::Xaml::Window menuWindow_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid menuAnchor_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::MenuFlyout menu_{nullptr};
+  HWND menuHwnd_ = nullptr;
+  bool menuPending_ = false;
+  bool menuOpenRequested_ = false;
+  std::shared_ptr<int> menuLifetime_;
 };
 
 }  // namespace ClassTimeApp
