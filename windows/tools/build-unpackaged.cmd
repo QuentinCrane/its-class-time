@@ -11,7 +11,19 @@ if not "%~1"=="" set "OUTDIR=%~f1"
 set "OBJDIR=%OUTDIR%\obj"
 set "EXE=%OUTDIR%\ClassTimeApp.exe"
 
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x64 >nul
+set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat"
+if not exist "%VCVARS%" (
+  if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" (
+    for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+      set "VCVARS=%%i\VC\Auxiliary\Build\vcvarsall.bat"
+    )
+  )
+)
+if not exist "%VCVARS%" (
+  echo Visual Studio 2022 C++ Build Tools ^(vcvarsall.bat^) not found.
+  exit /b 1
+)
+call "%VCVARS%" x64 >nul
 if errorlevel 1 exit /b 1
 
 REM Put NuGet CppWinRT projections before the SDK's older ones, or Microsoft.UI.h fails with C2888.
