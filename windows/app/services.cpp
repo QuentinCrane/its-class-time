@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "services.h"
+#include "template_ops.h"
 
 #include <fstream>
 #include <sstream>
@@ -276,6 +277,22 @@ void Services::SetLaunchAtLogin(bool enabled) {
     PersistConfig();
   }
   NotifyChanged();
+}
+
+bool Services::AddTemplate(const std::string& name, bool copyCurrent, std::string* error) {
+  {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto next = config_;
+    if (!CreateTemplate(next, name, copyCurrent, error)) return false;
+    if (!WriteAtomic(configPath(), classtime::SerializeConfig(next))) {
+      if (error) *error = "无法保存配置，请检查配置文件夹的写入权限";
+      return false;
+    }
+    config_ = std::move(next);
+    RecomputeLocked();
+  }
+  NotifyChanged();
+  return true;
 }
 
 bool Services::SelectTemplate(const std::string& templateId, std::string* error) {

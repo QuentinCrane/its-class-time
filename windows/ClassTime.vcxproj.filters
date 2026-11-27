@@ -88,6 +88,9 @@
     <ClInclude Include="app\services.h">
       <Filter>App</Filter>
     </ClInclude>
+    <ClInclude Include="app\template_ops.h">
+      <Filter>App</Filter>
+    </ClInclude>
     <ClInclude Include="app\tray_icon.h">
       <Filter>App</Filter>
     </ClInclude>

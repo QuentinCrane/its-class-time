@@ -13,6 +13,7 @@
 #include "classtime/schedule.h"
 #include "classtime/time_engine.h"
 #include "../app/timeline_edit.h"
+#include "../app/template_ops.h"
 #include "../app/widget_state.h"
 
 namespace {
@@ -245,6 +246,56 @@ void TestBoundariesAndDedupe(const classtime::Schedule& highSchool) {
   Check(classtime::HasFired(again, key), "运行态可持久化去重键");
   Check(classtime::EventKey("2026-11-23", "h1", classtime::BoundaryKind::FocusEnd, 4) != key,
         "计划修订号参与去重键");
+}
+
+void TestTemplateCreation(const classtime::Schedule& highSchool,
+                          const classtime::Schedule& university) {
+  classtime::AppConfig config;
+  config.templates = {highSchool, university};
+  config.selectedTemplateId = highSchool.id;
+  config.revision = 7;
+  const auto now = Clock("2026-11-23T09:00:00");
+  classtime::SetOverride(config, now.DateKey(), university.segments);
+  std::string error;
+
+  Check(ClassTimeApp::CreateTemplate(config, "我的课表", true, &error), "可以复制当前模板");
+  Check(config.templates.size() == 3 && config.selectedTemplateId == "custom-1" &&
+            config.revision == 8,
+        "新模板有独立 ID，创建后选中并更新修订号");
+  const auto* copy = classtime::SelectedTemplate(config);
+  Check(copy && copy->name == "我的课表" && copy->activeWeekdays == highSchool.activeWeekdays &&
+            copy->segments == highSchool.segments,
+        "副本保留当前模板的时段和生效星期");
+  bool fromOverride = false;
+  Check(classtime::EffectiveSegments(config, now, &fromOverride) == university.segments && fromOverride,
+        "创建模板不覆盖今天的临时计划");
+
+  auto* editableCopy = classtime::FindTemplateMutable(config, "custom-1");
+  if (editableCopy && !editableCopy->segments.empty()) editableCopy->segments[0].label = "副本修改";
+  Check(classtime::FindTemplate(config, highSchool.id)->segments == highSchool.segments,
+        "编辑副本不影响原模板");
+  Check(ClassTimeApp::CreateTemplate(config, "空白课表", false, &error), "可以创建空白模板");
+  const auto* blank = classtime::SelectedTemplate(config);
+  Check(blank && blank->id == "custom-2" && blank->segments.empty() &&
+            blank->activeWeekdays == std::vector<int>({1, 2, 3, 4, 5}),
+        "空白模板使用不同 ID，并默认在工作日生效");
+  const auto parsed = classtime::ParseConfig(classtime::SerializeConfig(config), &error);
+  Check(parsed && parsed->templates.size() == 4 && parsed->selectedTemplateId == "custom-2" &&
+            classtime::FindTemplate(*parsed, "custom-1") &&
+            classtime::FindTemplate(*parsed, "custom-1")->segments[0].label == "副本修改" &&
+            classtime::HasOverride(*parsed, now.DateKey()),
+        "新模板、选择状态和今日覆盖可一起保存并恢复");
+  classtime::RemoveOverride(config, now.DateKey());
+  Check(classtime::EffectiveSegments(config, now).empty(), "移除今日覆盖后使用选中的空白模板");
+  const auto previousCount = config.templates.size();
+  const auto previousId = config.selectedTemplateId;
+  Check(!ClassTimeApp::CreateTemplate(config, "", true, &error) &&
+            config.templates.size() == previousCount && config.selectedTemplateId == previousId,
+        "拒绝空名称且不改变原配置");
+  config.selectedTemplateId = "missing";
+  Check(!ClassTimeApp::CreateTemplate(config, "新模板", true, &error) &&
+            config.templates.size() == previousCount && config.selectedTemplateId == "missing",
+        "复制来源不存在时不改变配置");
 }
 
 void TestConfigRoundtrip(const classtime::Schedule& highSchool,
@@ -509,6 +560,7 @@ int main(int argc, char** argv) {
     TestWidgetState(highSchool);
   }
   TestConfigRoundtrip(highSchool, university);
+  TestTemplateCreation(highSchool, university);
   TestConfigVersions(highSchool);
   TestTimelineDrag();
 

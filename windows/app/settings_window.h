@@ -85,6 +85,7 @@ class SettingsWindow {
 
   // 非阻断状态提示与需要确认的操作。
   void ShowScheduleNotice(const std::wstring& text, bool error = false);
+  void ShowAddTemplateDialog();
   void ConfirmRestorePreset();
   void PerformRestorePreset();
   void ConfirmEditorDelete();
@@ -154,6 +155,7 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer generalScroll_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ComboBox templateCombo_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock templateStatus_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Button restorePresetButton_{nullptr};
   // 模板重命名：输入防抖后写入当前模板名称。
   winrt::Microsoft::UI::Xaml::Controls::TextBox templateNameBox_{nullptr};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer templateNameTimer_{nullptr};

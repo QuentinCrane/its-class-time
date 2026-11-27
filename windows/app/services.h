@@ -52,6 +52,9 @@ class Services {
   // 切换当前模板（保留各模板自身编辑结果）。
   bool SelectTemplate(const std::string& templateId, std::string* error);
 
+  // 创建并选中新模板；保存失败时保留原配置与当前计划。
+  bool AddTemplate(const std::string& name, bool copyCurrent, std::string* error);
+
   // 修改当前模板的生效星期。
   void SetActiveWeekdays(const std::vector<int>& weekdays);
 

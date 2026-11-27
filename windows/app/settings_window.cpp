@@ -9,6 +9,7 @@
 #include "widget_state.h"
 
 #include <initializer_list>
+#include <cwctype>
 #include <limits>
 
 #include <winrt/Microsoft.UI.Interop.h>
@@ -27,7 +28,7 @@ using namespace Windows::Foundation;
 namespace ClassTimeApp {
 namespace {
 
-constexpr wchar_t kVersion[] = L"0.1.0";
+constexpr wchar_t kVersion[] = L"0.1.1";
 using Presentation = classtime::PresentationSettings;
 constexpr double kPreviewWidth = 420;
 constexpr double kPreviewHeight = 172;
@@ -290,6 +291,14 @@ void BindActionRow(StackPanel const& row, double horizontalWidth) {
 }
 
 std::wstring TextOf(TextBox const& box) { return std::wstring(box.Text().c_str()); }
+
+std::wstring TrimTemplateName(const std::wstring& name) {
+  const auto first = std::find_if_not(name.begin(), name.end(),
+                                      [](wchar_t c) { return std::iswspace(c) != 0; });
+  const auto last = std::find_if_not(name.rbegin(), name.rend(),
+                                     [](wchar_t c) { return std::iswspace(c) != 0; }).base();
+  return first < last ? std::wstring(first, last) : std::wstring{};
+}
 
 void SetText(TextBox const& box, const std::wstring& text) {
   if (TextOf(box) != text) box.Text(hstring(text));
@@ -829,8 +838,11 @@ void SettingsWindow::Build() {
     labelCol.Width(GridLengthHelper::Auto());
     auto valueCol = ColumnDefinition();
     valueCol.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+    auto actionCol = ColumnDefinition();
+    actionCol.Width(GridLengthHelper::Auto());
     templateRow.ColumnDefinitions().Append(labelCol);
     templateRow.ColumnDefinitions().Append(valueCol);
+    templateRow.ColumnDefinitions().Append(actionCol);
     templateRow.ColumnSpacing(12);
     auto label = MakeText(L"模板", 14);
     label.VerticalAlignment(VerticalAlignment::Center);
@@ -839,6 +851,12 @@ void SettingsWindow::Build() {
     templateCombo_.HorizontalAlignment(HorizontalAlignment::Stretch);
     Grid::SetColumn(templateCombo_, 1);
     templateRow.Children().Append(templateCombo_);
+    auto addTemplate = Button();
+    addTemplate.Content(box_value(hstring(L"新增模板")));
+    StyleAction(addTemplate, false);
+    addTemplate.Click([this](auto const&, auto const&) { ShowAddTemplateDialog(); });
+    Grid::SetColumn(addTemplate, 2);
+    templateRow.Children().Append(addTemplate);
     Add(stack, templateRow);
 
     templateStatus_ = MakeSubtitle(L"");
@@ -898,10 +916,11 @@ void SettingsWindow::Build() {
     add.Content(box_value(hstring(L"新增时段")));
     StyleAction(add, true);
     add.Click([this](auto const&, auto const&) { OpenNewEditor(); });
-    auto restore = Button();
-    restore.Content(box_value(hstring(L"恢复默认...")));
-    StyleAction(restore, false, true);
-    restore.Click([this](auto const&, auto const&) { ConfirmRestorePreset(); });
+    restorePresetButton_ = Button();
+    restorePresetButton_.Content(box_value(hstring(L"恢复默认...")));
+    StyleAction(restorePresetButton_, false, true);
+    ToolTipService::SetToolTip(restorePresetButton_, box_value(L"仅内置高中和大学模板可恢复预设"));
+    restorePresetButton_.Click([this](auto const&, auto const&) { ConfirmRestorePreset(); });
     clearTodayButton_ = Button();
     clearTodayButton_.Content(box_value(hstring(L"撤销今日调整")));
     StyleAction(clearTodayButton_, false, true);
@@ -911,7 +930,7 @@ void SettingsWindow::Build() {
       RefreshAll();
     });
     Add(buttons, add);
-    Add(buttons, restore);
+    Add(buttons, restorePresetButton_);
     Add(buttons, clearTodayButton_);
     BindActionRow(buttons, 350);
     Add(editingStack, buttons);
@@ -2076,6 +2095,8 @@ void SettingsWindow::RefreshAll() {
 
 void SettingsWindow::RefreshTemplates() {
   const auto& config = Services::Instance().config();
+  restorePresetButton_.IsEnabled(config.selectedTemplateId == "high-school" ||
+                                 config.selectedTemplateId == "university");
   int selected = 0;
   int index = 0;
   for (const auto& schedule : config.templates) {
@@ -3278,6 +3299,69 @@ void SettingsWindow::ShowScheduleNotice(const std::wstring& text, bool error) {
   scheduleNotice_.Severity(error ? InfoBarSeverity::Error : InfoBarSeverity::Success);
   scheduleNotice_.Message(hstring(text));
   scheduleNotice_.IsOpen(true);
+}
+
+void SettingsWindow::ShowAddTemplateDialog() {
+  CommitTemplateName();
+  ContentDialog dialog;
+  dialog.Title(box_value(hstring(L"新增模板")));
+  dialog.PrimaryButtonText(L"创建并使用");
+  dialog.CloseButtonText(L"取消");
+  dialog.DefaultButton(ContentDialogButton::Primary);
+
+  StackPanel fields;
+  fields.Spacing(12);
+  TextBox name;
+  name.Header(box_value(hstring(L"模板名称")));
+  name.Text(L"新模板");
+  name.MaxLength(80);
+  Automation::AutomationProperties::SetName(name, L"新模板名称");
+  Add(fields, name);
+
+  RadioButtons source;
+  source.Header(box_value(hstring(L"创建方式")));
+  source.Items().Append(box_value(L"复制当前模板的时段和生效星期"));
+  source.Items().Append(box_value(L"空白模板（默认周一至周五生效）"));
+  source.SelectedIndex(0);
+  Automation::AutomationProperties::SetName(source, L"模板创建方式");
+  Add(fields, source);
+  Add(fields, MakeSubtitle(L"创建后立即切换到新模板；若今天有临时调整，今天仍按临时计划执行。"));
+  auto errorText = MakeText(L"请输入模板名称。", 13,
+                            ResourceBrush(L"SystemFillColorCriticalBrush",
+                                          Windows::UI::ColorHelper::FromArgb(255, 196, 43, 28)));
+  errorText.Visibility(Visibility::Collapsed);
+  Add(fields, errorText);
+  dialog.Content(fields);
+  dialog.PrimaryButtonClick([name, errorText](ContentDialog const&,
+                                             ContentDialogButtonClickEventArgs const& args) {
+    if (TrimTemplateName(TextOf(name)).empty()) {
+      errorText.Visibility(Visibility::Visible);
+      args.Cancel(true);
+    }
+  });
+
+  try {
+    dialog.XamlRoot(rootGrid_.XamlRoot());
+    auto operation = dialog.ShowAsync();
+    operation.Completed([this, name, source](IAsyncOperation<ContentDialogResult> const& async,
+                                             AsyncStatus const&) {
+      if (async.Status() != AsyncStatus::Completed ||
+          async.GetResults() != ContentDialogResult::Primary) return;
+      std::string error;
+      if (!Services::Instance().AddTemplate(ToUtf8(TrimTemplateName(TextOf(name))),
+                                            source.SelectedIndex() == 0, &error)) {
+        ShowScheduleNotice(L"创建模板失败：" + ToWide(error), true);
+        return;
+      }
+      planScope_.SelectedIndex(0);
+      RefreshAll();
+      ShowScheduleNotice(Services::Instance().usingTodayOverride()
+                             ? L"新模板已创建；今天仍按临时计划执行。"
+                             : L"新模板已创建并开始使用。");
+    });
+  } catch (...) {
+    ShowScheduleNotice(L"无法打开新增模板窗口，请重试。", true);
+  }
 }
 
 void SettingsWindow::ConfirmRestorePreset() {
