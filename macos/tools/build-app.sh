@@ -19,17 +19,23 @@ if pgrep -x "${APP_NAME}" >/dev/null 2>&1; then
   exit 1
 fi
 
-SWIFTPM_FLAGS=()
-if [[ "${CLASSTIME_SWIFTPM_DISABLE_SANDBOX:-0}" == "1" ]]; then
-  SWIFTPM_FLAGS+=(--disable-sandbox)
-fi
+# macOS 自带 Bash 3.2 在 set -u 下展开空数组会报错，用函数传递可选参数。
+swiftpm() {
+  local subcommand="$1"
+  shift
+  if [[ "${CLASSTIME_SWIFTPM_DISABLE_SANDBOX:-0}" == "1" ]]; then
+    swift "${subcommand}" --disable-sandbox "$@"
+  else
+    swift "${subcommand}" "$@"
+  fi
+}
 
 echo "==> [1/4] 运行共享作息时间引擎对等测试..."
-swift run "${SWIFTPM_FLAGS[@]}" --package-path "${MACOS_DIR}" engine-tests "${REPO_ROOT}"
+swiftpm run --package-path "${MACOS_DIR}" engine-tests "${REPO_ROOT}"
 
 echo "==> [2/4] 编译 Release 原生二进制..."
-swift build "${SWIFTPM_FLAGS[@]}" -c release --package-path "${MACOS_DIR}" --product "${APP_NAME}"
-BIN_PATH="$(swift build "${SWIFTPM_FLAGS[@]}" -c release --package-path "${MACOS_DIR}" --show-bin-path)/${APP_NAME}"
+swiftpm build -c release --package-path "${MACOS_DIR}" --product "${APP_NAME}"
+BIN_PATH="$(swiftpm build -c release --package-path "${MACOS_DIR}" --show-bin-path)/${APP_NAME}"
 
 if [[ ! -x "${BIN_PATH}" ]]; then
   echo "错误：未找到编译产物 ${BIN_PATH}" >&2
