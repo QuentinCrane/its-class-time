@@ -22,7 +22,7 @@ tools\build-unpackaged.cmd
 不依赖 MSBuild，也不依赖 XAML 编译器；适用于被组策略限制的开发机。需要验证安装包时：
 
 ```powershell
-# 需要 Inno Setup 7，产物 build\release\ItsClassTime-Setup-<版本>-x64.exe
+# 需要 Inno Setup 7，产物 build\release\ItsClassTime-<版本>-Windows-x64-Setup.exe
 .\windows\tools\build-installer.ps1
 ```
 
@@ -43,7 +43,7 @@ windows\build\engine\engine_tests.exe "<仓库绝对路径>"
 ./macos/tools/build-app.sh
 # 产物：macos/build/app/ItsClassTime.app
 
-# 打包离线安装镜像（产物：macos/build/release/ItsClassTime-0.1.1-arm64.dmg）
+# 打包离线安装镜像（产物：macos/build/release/ItsClassTime-<版本>-macOS-arm64.dmg）
 ./macos/tools/build-dmg.sh
 
 # 单独验证作息时间引擎（220 项共享与对等检查）
@@ -57,7 +57,7 @@ swift run --package-path macos engine-tests "$(pwd)"
 ```text
 It'sClassTime/
 ├── macos/                   # SwiftUI + AppKit 原生工程（可构建 .app / .dmg 并跑通 220 项引擎检查）
-├── windows/                 # C++/WinRT + WinUI 3 原生工程（可构建 .exe 与离线安装包并跑通 216 项引擎检查）
+├── windows/                 # C++/WinRT + WinUI 3 原生工程（可构建 .exe 与离线安装包并跑通 244 项引擎检查）
 ├── shared/
 │   ├── schemas/
 │   ├── presets/
@@ -66,7 +66,7 @@ It'sClassTime/
 │   ├── prototype/
 │   └── screenshots/
 ├── docs/
-├── .github/workflows/       # 尚未添加工作流，先保证双端本机可构建
+├── .github/workflows/       # Windows 构建与双端发行工作流
 ├── AGENTS.md
 └── README.md
 ```
@@ -110,10 +110,9 @@ It'sClassTime/
 
 ### Step 5：CI / Release
 
-- **当前尚未接入 CI。** 先在两端完成本机构建与安装验证，再写“确实能跑通”的工作流，而不是先提交一份没人跑过的 YAML。
-- 计划：`macos-*` runner 构建 macOS 工程并跑引擎测试，`windows-*` runner 构建 C++ 工程并跑引擎测试；先上传 artifacts。
-- 无签名的产物**不标成正式可安装发行包**。Windows 安装包目前就是未签名状态，需明确告知 SmartScreen 风险。
-- 通过本地安装测试后，再配置 Apple Developer ID + notarization、Windows 代码签名/信任链，并统一到单个 GitHub Release。
+- Windows 和 macOS 构建工作流分别运行引擎检查并生成安装包；发行工作流仅在两端构建成功后创建 GitHub Release。
+- 当前 Windows 安装包未签名、macOS 应用仅 Ad-hoc 签名且未公证，发行说明必须明确提示 SmartScreen 和 Gatekeeper 的限制。
+- 继续补充双端实机安装验证，并配置 Apple Developer ID、公证与 Windows 代码签名。
 - 版本号与 changelog 统一维护；mac 和 windows 可各自标注“本次改动”。
 
 ## 4. Git 使用建议
@@ -136,5 +135,5 @@ git push -u origin feat/windows-hover-fix
 
 - GitHub Actions 可自动化**构建**，但 macOS 公证与 Windows 代码签名是另外的步骤，需要开发者身份、证书/权限等前提。
 - 试验版本可先作为本地调试程序运行。别在还没解决签名时写“零提示安装”一类不真实承诺。
-- 当前状态：**Windows 有可运行源码与未签名离线安装 EXE；macOS 有可运行源码、本机 Ad-hoc 签名 `ItsClassTime.app` 与离线 `.dmg` 镜像**。双端正式签名/公证与 GitHub Release 尚未发布。
+- 当前状态：**Windows 提供未签名离线安装 EXE；macOS 提供 Ad-hoc 签名的 `ItsClassTime.app` 与离线 `.dmg` 镜像**。双端正式签名与公证尚未完成。
 - Windows 的通知注册与开机启动属于打包相关能力，解包模式下只能验证界面与引擎；相关结论要注明是在哪种形态下测得的。

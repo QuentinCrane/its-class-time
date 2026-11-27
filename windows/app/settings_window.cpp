@@ -116,13 +116,8 @@ int SnapToTimelineStep(int minute, int step) {
 }
 
 Windows::UI::Color SegmentColor(classtime::SegmentKind kind) {
-  const auto brush = ResourceBrush(
-      kind == classtime::SegmentKind::Focus
-          ? L"ClassTimeFocusBrush"
-          : kind == classtime::SegmentKind::Lunch ? L"ClassTimeLunchBrush" : L"ClassTimeRestBrush",
-      Windows::UI::ColorHelper::FromArgb(255, 79, 107, 237));
-  if (const auto solid = brush.try_as<SolidColorBrush>()) return solid.Color();
-  return Windows::UI::ColorHelper::FromArgb(255, 79, 107, 237);
+  const auto palette = WidgetAppearance::ResolvePalette(Services::Instance().config().presentation);
+  return WidgetAppearance::KindColor(palette, kind);
 }
 
 TextBlock MakeText(const std::wstring& text, double size, Brush brush = nullptr) {
@@ -524,6 +519,7 @@ constexpr double kPreviewScreenLeft = 42;
 constexpr double kPreviewScreenTop = 5;
 constexpr double kPreviewScreenWidth = kPreviewWidth - 2 * kPreviewScreenLeft;
 constexpr double kPreviewScreenHeight = 143;
+constexpr double kPreviewTaskbarHeight = 12;
 constexpr double kPreviewScreenCenterX = kPreviewWidth / 2;
 
 Windows::UI::Color PreviewColor(uint8_t r, uint8_t g, uint8_t b) {
@@ -557,11 +553,44 @@ void DrawPreviewChrome(const Canvas& canvas) {
 
 bool DrawScheduleScreenEdge(const Canvas& canvas, double left, double top, double width,
                             double height, double line, const std::vector<classtime::Segment>& plan,
-                            const classtime::WallClock& now, const WidgetAppearance::Palette& palette) {
+                            const classtime::WallClock& now, const WidgetAppearance::Palette& palette,
+                            bool gradient) {
   const auto runs = BuildScreenEdgeRuns(plan, now);
   if (runs.empty()) return false;
   const std::array<double, 4> lengths = {width, height - line, width - line, height - 2 * line};
   const double perimeter = std::accumulate(lengths.begin(), lengths.end(), 0.0);
+  if (!gradient) {
+    for (const auto& run : ProjectScreenEdgeRuns(runs, lengths)) {
+      const double span = run.end - run.begin;
+      if (span <= 0) continue;
+      Shapes::Rectangle shape;
+      shape.Fill(SolidColorBrush(WidgetAppearance::ScreenEdgeRunColor(palette, run.kind, run.elapsed)));
+      double x = left, y = top;
+      if (run.side == 0) {
+        x += run.begin;
+        shape.Width(span);
+        shape.Height(line);
+      } else if (run.side == 1) {
+        x += width - line;
+        y += line + run.begin;
+        shape.Width(line);
+        shape.Height(span);
+      } else if (run.side == 2) {
+        x += width - line - run.end;
+        y += height - line;
+        shape.Width(span);
+        shape.Height(line);
+      } else {
+        y += height - line - run.end;
+        shape.Width(line);
+        shape.Height(span);
+      }
+      Canvas::SetLeft(shape, x);
+      Canvas::SetTop(shape, y);
+      canvas.Children().Append(shape);
+    }
+    return true;
+  }
   const auto stops = WidgetAppearance::ScreenEdgeColorStops(runs, palette);
   double sideStart = 0;
   for (size_t side = 0; side < lengths.size(); ++side) {
@@ -619,10 +648,136 @@ bool DrawScheduleScreenEdge(const Canvas& canvas, double left, double top, doubl
   return true;
 }
 
+void DrawScreenEdgeHighlight(const Canvas& canvas, double left, double top, double width,
+                             double height, double line, double progress,
+                             Storyboard const& pulseStoryboard = nullptr) {
+  if (progress <= 0.0001 || progress >= 0.9999) return;
+  const std::array<double, 4> lengths = {width, height - line, width - line, height - 2 * line};
+  const double perimeter = std::accumulate(lengths.begin(), lengths.end(), 0.0);
+  if (perimeter <= 0) return;
+  const double head = progress * perimeter;
+  const auto spec = BuildScreenEdgeHighlightSpec(perimeter, line);
+  const double hlBegin = std::max(0.0, head - spec.tailLength);
+  const double hlEnd = std::min(perimeter, head + spec.leadLength);
+  if (hlEnd <= hlBegin) return;
+
+  const auto placeRect = [&](size_t side, double localBegin, double localEnd,
+                             double crossOffset, double crossSize, const Brush& brush) {
+    const double span = localEnd - localBegin;
+    if (span <= 0 || crossSize <= 0) return Shapes::Rectangle{nullptr};
+    Shapes::Rectangle shape;
+    shape.Fill(brush);
+    double x = left, y = top;
+    if (side == 0) {
+      x += localBegin;
+      y += crossOffset;
+      shape.Width(span);
+      shape.Height(crossSize);
+    } else if (side == 1) {
+      x += width - line + crossOffset;
+      y += line + localBegin;
+      shape.Width(crossSize);
+      shape.Height(span);
+    } else if (side == 2) {
+      x += width - line - localEnd;
+      y += height - line + crossOffset;
+      shape.Width(span);
+      shape.Height(crossSize);
+    } else {
+      x += crossOffset;
+      y += height - line - localEnd;
+      shape.Width(crossSize);
+      shape.Height(span);
+    }
+    Canvas::SetLeft(shape, x);
+    Canvas::SetTop(shape, y);
+    canvas.Children().Append(shape);
+    return shape;
+  };
+
+  const double inset = std::max(0.75, line * 0.22);
+  const double coreLine = std::max(1.5, line - 2.0 * inset);
+  const double coreOffset = (line - coreLine) * 0.5;
+  const auto lipBrush = SolidColorBrush(Windows::UI::ColorHelper::FromArgb(165, 18, 24, 38));
+  const bool animate = pulseStoryboard != nullptr && Motion::Enabled();
+  SineEase pulseEase;
+  pulseEase.EasingMode(EasingMode::EaseInOut);
+
+  double sideStart = 0;
+  for (size_t side = 0; side < lengths.size(); ++side) {
+    const double sideEnd = sideStart + lengths[side];
+
+    // 1) 前沿未到侧的窄暗对比边，确保浅色背景下也能精确定位进度终点。
+    const double lipBegin = std::max(sideStart, head);
+    const double lipEnd = std::min(sideEnd, hlEnd);
+    if (lipEnd > lipBegin) {
+      placeRect(side, lipBegin - sideStart, lipEnd - sideStart, 0, line, lipBrush);
+    }
+
+    // 2) 居中内缩的白光条芯：保留彩色外缘不呈“断层”，并按 500ms AutoReverse 呼吸闪烁。
+    const double segBegin = std::max(sideStart, hlBegin);
+    const double segEnd = std::min(sideEnd, head);
+    if (segEnd > segBegin) {
+      const double localBegin = segBegin - sideStart;
+      const double localEnd = segEnd - sideStart;
+      const double span = segEnd - segBegin;
+
+      std::vector<double> samples = {segBegin, segEnd};
+      for (int k = 1; k < 8; ++k) samples.push_back(segBegin + span * k / 8.0);
+      for (double key : {head - spec.headSpan, head - std::max(2.5, line * 0.9)}) {
+        if (key > segBegin && key < segEnd) samples.push_back(key);
+      }
+      std::sort(samples.begin(), samples.end());
+
+      LinearGradientBrush brush;
+      brush.ColorInterpolationMode(ColorInterpolationMode::SRgbLinearInterpolation);
+      for (double pos : samples) {
+        GradientStop stop;
+        stop.Offset((pos - segBegin) / span);
+        const auto sample = SampleScreenEdgeHighlight(pos, head, perimeter, line, 0.65);
+        const double core = pos >= head - std::max(2.5, line * 0.9)
+                                ? std::max(sample.core, 0.92)
+                                : sample.core;
+        stop.Color(WidgetAppearance::ScreenEdgeHighlightColor(core));
+        brush.GradientStops().Append(stop);
+      }
+      if (side == 0) {
+        brush.StartPoint({0, 0});
+        brush.EndPoint({1, 0});
+      } else if (side == 1) {
+        brush.StartPoint({0, 0});
+        brush.EndPoint({0, 1});
+      } else if (side == 2) {
+        brush.StartPoint({1, 0});
+        brush.EndPoint({0, 0});
+      } else {
+        brush.StartPoint({0, 1});
+        brush.EndPoint({0, 0});
+      }
+      if (auto coreShape = placeRect(side, localBegin, localEnd, coreOffset, coreLine, brush)) {
+        if (animate) {
+          DoubleAnimation pulse;
+          pulse.From(0.30);
+          pulse.To(1.0);
+          pulse.Duration(DurationHelper::FromTimeSpan(std::chrono::milliseconds(500)));
+          pulse.AutoReverse(true);
+          pulse.RepeatBehavior(RepeatBehaviorHelper::Forever());
+          pulse.EasingFunction(pulseEase);
+          Storyboard::SetTarget(pulse, coreShape);
+          Storyboard::SetTargetProperty(pulse, L"Opacity");
+          pulseStoryboard.Children().Append(pulse);
+        }
+      }
+    }
+    sideStart = sideEnd;
+  }
+}
+
 void DrawPreviewDetail(const Canvas& canvas, const Presentation& presentation,
                        const WidgetState& state, const std::vector<classtime::Segment>& plan,
                        const classtime::WallClock& now, const WidgetAppearance::Palette& palette,
-                       bool expanded, int thickness) {
+                       bool expanded, int thickness,
+                       Storyboard const& pulseStoryboard = nullptr) {
   canvas.Children().Clear();
   const auto place = [&](const UIElement& item, double x, double y) {
     Canvas::SetLeft(item, x);
@@ -680,7 +835,14 @@ void DrawPreviewDetail(const Canvas& canvas, const Presentation& presentation,
     const double line = std::clamp(thickness * 0.5, 2.0, 10.0);
     if (presentation.scope == Presentation::Scope::AllDay &&
         presentation.screenEdgeColors == Presentation::ScreenEdgeColors::Schedule &&
-        DrawScheduleScreenEdge(canvas, left, top, width, height, line, plan, now, palette)) return;
+        DrawScheduleScreenEdge(canvas, left, top, width, height, line, plan, now, palette,
+                               presentation.screenEdgeGradient)) {
+      if (presentation.screenEdgeHighlight) {
+        DrawScreenEdgeHighlight(canvas, left, top, width, height, line, state.edgeProgress,
+                                pulseStoryboard);
+      }
+      return;
+    }
     const auto track = SolidColorBrush(Windows::UI::ColorHelper::FromArgb(172, 100, 117, 137));
     rect(left, top, width, line, track);
     rect(left + width - line, top + line, line, height - line, track);
@@ -700,6 +862,10 @@ void DrawPreviewDetail(const Canvas& canvas, const Presentation& presentation,
     if (remaining > 0) {
       const double length = std::min(height - 2 * line, remaining);
       rect(left, top + height - line - length, line, length, accent);
+    }
+    if (presentation.screenEdgeHighlight && !plan.empty()) {
+      DrawScreenEdgeHighlight(canvas, left, top, width, height, line, state.edgeProgress,
+                              pulseStoryboard);
     }
     return;
   }
@@ -830,8 +996,10 @@ PreviewPoint PreviewAnchor(const Presentation& presentation, bool expanded) {
   const bool side = edge == Edge::Left || edge == Edge::Right;
   const bool grip = presentation.autoHideAtEdge && !expanded;
   const bool flush = presentation.flushWithEdge;
+  const double screenHeight =
+      kPreviewScreenHeight + (presentation.coverTaskbar ? kPreviewTaskbarHeight : 0.0);
   if (!presentation.visible || presentation.view == Presentation::View::ScreenEdge) {
-    return {kPreviewScreenCenterX, kPreviewScreenTop + kPreviewScreenHeight / 2};
+    return {kPreviewScreenCenterX, kPreviewScreenTop + screenHeight / 2};
   }
   const bool ring = presentation.view == Presentation::View::Ring && !grip;
   const double fraction = std::clamp((presentation.EffectiveBarLength() - 240) / 1360.0, 0.0, 1.0);
@@ -840,10 +1008,10 @@ PreviewPoint PreviewAnchor(const Presentation& presentation, bool expanded) {
     const double x = edge == Edge::Left ? kPreviewScreenLeft + inset
                                        : kPreviewScreenLeft + kPreviewScreenWidth - inset;
     const double half = grip ? 26 : ring ? 44 : (50 + 86 * fraction) / 2;
-    const double y = std::clamp(kPreviewScreenTop + kPreviewScreenHeight / 2 +
-                                    presentation.offsetY * kPreviewScreenHeight / 1080.0,
+    const double y = std::clamp(kPreviewScreenTop + screenHeight / 2 +
+                                    presentation.offsetY * screenHeight / 1080.0,
                                 kPreviewScreenTop + half,
-                                kPreviewScreenTop + kPreviewScreenHeight - half);
+                                kPreviewScreenTop + screenHeight - half);
     return {x, y};
   }
   const double inset = grip ? 4.5 : ring ? (flush ? 46 : 51) : (flush ? 12.5 : 19.5);
@@ -853,23 +1021,30 @@ PreviewPoint PreviewAnchor(const Presentation& presentation, bool expanded) {
                               kPreviewScreenLeft + half,
                               kPreviewScreenLeft + kPreviewScreenWidth - half);
   return {x, edge == Edge::Top ? kPreviewScreenTop + inset
-                                : kPreviewScreenTop + kPreviewScreenHeight - inset};
+                                : kPreviewScreenTop + screenHeight - inset};
 }
 
 }  // namespace
 
-SettingsWindow::SettingsWindow(std::function<void()> exitRequested)
-    : exitRequested_(std::move(exitRequested)) { Build(); }
+SettingsWindow::SettingsWindow(std::function<void()> exitRequested,
+                               std::function<bool()> testVisualAlertRequested)
+    : exitRequested_(std::move(exitRequested)),
+      testVisualAlertRequested_(std::move(testVisualAlertRequested)) {
+  Build();
+}
 
 SettingsWindow::~SettingsWindow() {
   StopPreviewRefresh();
   CommitScreenEdgeThickness();
   CommitBarLength();
   CommitBarBackground();
+  CommitPhaseColors();
+  CommitAlertColors();
   CommitTemplateName();
   Motion::Stop(editorMotion_);
   Motion::Stop(sectionMotion_);
   Motion::Stop(previewMotion_);
+  Motion::Stop(previewHighlightMotion_);
   Motion::Stop(displayPanelMotion_);
   if (window_ != nullptr) {
     try {
@@ -928,6 +1103,8 @@ void SettingsWindow::Build() {
     CommitScreenEdgeThickness();
     CommitBarLength();
     CommitBarBackground();
+    CommitPhaseColors();
+    CommitAlertColors();
     CommitTemplateName();
     args.Cancel(true);
     if (hwnd_ != nullptr) ShowWindow(hwnd_, SW_HIDE);
@@ -1375,7 +1552,16 @@ void SettingsWindow::Build() {
           Services::Instance().UpdatePresentation(presentation);
         }));
     Add(screenEdgeColorPanel_, MakeSubtitle(L"分色按各时段的实际时长排列，较浅部分尚未到达。"));
+    screenEdgeGradientToggle_ = ToggleSwitch();
+    screenEdgeGradientRow_ = MakeToggleRow(
+        screenEdgeGradientToggle_, L"颜色平滑渐变",
+        L"关闭后各时段与进度边界清晰分段，不做渐变过渡");
+    Add(screenEdgeColorPanel_, screenEdgeGradientRow_);
     Add(screenEdgeControls_, screenEdgeColorPanel_);
+    screenEdgeHighlightToggle_ = ToggleSwitch();
+    Add(screenEdgeControls_, MakeToggleRow(
+        screenEdgeHighlightToggle_, L"高亮当前进度位置",
+        L"在当前时间前沿显示流光与呼吸闪烁高光，便于一眼分辨进度位置"));
 
     dockControls_ = StackPanel();
     dockControls_.Spacing(10);
@@ -1446,6 +1632,46 @@ void SettingsWindow::Build() {
     Add(barColorPanel_, barColorPicker_);
     Add(stack, barColorPanel_);
 
+    Expander phaseColorExpander;
+    phaseColorExpander.Header(box_value(L"自定义阶段配色（上课 / 课间 / 午休）"));
+    phaseColorExpander.HorizontalAlignment(HorizontalAlignment::Stretch);
+    phaseColorExpander.HorizontalContentAlignment(HorizontalAlignment::Stretch);
+    StackPanel phaseColorBody;
+    phaseColorBody.Spacing(8);
+    Add(phaseColorBody, MakeSegments(
+        phaseColorTargetSegments_, {L"上课", L"课间", L"午休"}, [this](int index) {
+          phaseColorTarget_ = index;
+          RefreshPhaseColorEditor();
+        }));
+    phaseColorToggle_ = ToggleSwitch();
+    Add(phaseColorBody, MakeToggleRow(
+        phaseColorToggle_, L"自定义该阶段颜色", L"应用于长条、圆环、全屏边框、课表与时间轴"));
+    phaseColorHint_ = MakeSubtitle(L"");
+    Add(phaseColorBody, phaseColorHint_);
+    phaseColorPicker_ = ColorPicker();
+    phaseColorPicker_.IsAlphaEnabled(false);
+    phaseColorPicker_.IsMoreButtonVisible(false);
+    phaseColorPicker_.Visibility(Visibility::Collapsed);
+    Automation::AutomationProperties::SetName(phaseColorPicker_, L"阶段自定义颜色");
+    Add(phaseColorBody, phaseColorPicker_);
+    auto resetPhaseColors = Button();
+    resetPhaseColors.Content(box_value(hstring(L"恢复全部默认阶段配色")));
+    StyleAction(resetPhaseColors, false, true);
+    resetPhaseColors.HorizontalAlignment(HorizontalAlignment::Left);
+    resetPhaseColors.Click([this](auto const&, auto const&) {
+      if (phaseColorTimer_) phaseColorTimer_.Stop();
+      pendingPhaseColors_.fill(std::nullopt);
+      auto presentation = Services::Instance().config().presentation;
+      presentation.focusColor.clear();
+      presentation.restColor.clear();
+      presentation.lunchColor.clear();
+      Services::Instance().UpdatePresentation(presentation);
+      RefreshPhaseColorEditor();
+    });
+    Add(phaseColorBody, resetPhaseColors);
+    phaseColorExpander.Content(phaseColorBody);
+    Add(stack, phaseColorExpander);
+
     // 两种形式各自需要的贴边选项放在同一个宿主里：切换时宿主高度做补间，
     // 下面的开关就不会被瞬间顶开或吸上。
     displayOptionsHost_ = Grid();
@@ -1472,6 +1698,14 @@ void SettingsWindow::Build() {
     Add(behaviorStack, MakeCardTitle(L"行为设置"));
     visibleToggle_ = ToggleSwitch();
     Add(behaviorStack, MakeToggleRow(visibleToggle_, L"显示桌面组件"));
+    hideInFullscreenToggle_ = ToggleSwitch();
+    Add(behaviorStack, MakeToggleRow(
+        hideInFullscreenToggle_, L"全屏应用时自动隐藏",
+        L"目标显示器有全屏应用时临时隐藏组件，不影响后台提醒"));
+    coverTaskbarToggle_ = ToggleSwitch();
+    Add(behaviorStack, MakeToggleRow(
+        coverTaskbarToggle_, L"允许覆盖任务栏",
+        L"贴合完整屏幕四边或将组件覆于任务栏上方；仍遵循开始菜单与系统层级"));
     dockBehavior_ = StackPanel();
     dockBehavior_.Spacing(10);
     flushToggle_ = ToggleSwitch();
@@ -1537,7 +1771,7 @@ void SettingsWindow::Build() {
     motionSurface.Height(kPreviewHeight);
     RectangleGeometry screenClip;
     screenClip.Rect({kPreviewScreenLeft, kPreviewScreenTop, kPreviewScreenWidth,
-                     kPreviewScreenHeight});
+                     kPreviewScreenHeight + kPreviewTaskbarHeight});
     motionSurface.Clip(screenClip);
     motionSurface.Children().Append(previewStageA_);
     motionSurface.Children().Append(previewStageB_);
@@ -1648,6 +1882,215 @@ void SettingsWindow::Build() {
     Add(timingStack, MakeToggleRow(lunchToggle_, L"午休开始与结束", L"", L"\uE708"));
     timingCard.Child(timingStack);
     Add(notificationsStack, timingCard);
+
+    Add(notificationsStack, MakeCardTitle(L"视觉到点动效"));
+    auto visualCard = MakeCard();
+    auto visualStack = StackPanel();
+    visualStack.Spacing(10);
+    screenEdgeFlashToggle_ = ToggleSwitch();
+    Add(visualStack, MakeToggleRow(
+        screenEdgeFlashToggle_, L"全屏边缘闪光提醒",
+        L"到点时在目标显示器四边发出 3 次柔和阶段色呼吸光带，鼠标点击完全穿透", L"\uE793"));
+    Add(visualStack, MakeDivider());
+    dropClockToggle_ = ToggleSwitch();
+    Add(visualStack, MakeToggleRow(
+        dropClockToggle_, L"掉落 3D 放大时钟提醒",
+        L"到点时从屏幕顶部/边角掉落并放大 3D 立体时钟，不抢焦点、约 4 秒自动收回", L"\uE823"));
+
+    Border visualPreviewFrame;
+    visualPreviewFrame.CornerRadius(CornerRadius{10, 10, 10, 10});
+    visualPreviewFrame.Padding(Thickness{8, 8, 8, 8});
+    visualPreviewFrame.Background(
+        SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 20, 24, 34)));
+    visualPreviewFrame.BorderBrush(ResourceBrush(
+        L"CardStrokeColorDefaultBrush", Windows::UI::ColorHelper::FromArgb(50, 255, 255, 255)));
+    visualPreviewFrame.BorderThickness(Thickness{1, 1, 1, 1});
+    visualPreviewFrame.HorizontalAlignment(HorizontalAlignment::Stretch);
+    Viewbox visualPreviewFit;
+    visualPreviewFit.MaxHeight(220);
+    visualPreviewFit.Stretch(Stretch::Uniform);
+    visualPreviewCanvas_ = Canvas();
+    visualPreviewCanvas_.Width(420);
+    visualPreviewCanvas_.Height(206);
+    visualPreviewFit.Child(visualPreviewCanvas_);
+    visualPreviewFrame.Child(visualPreviewFit);
+    Add(visualStack, visualPreviewFrame);
+    visualPreviewCaption_ = MakeSubtitle(L"");
+    Add(visualStack, visualPreviewCaption_);
+
+    dropClockOptionsPanel_ = StackPanel();
+    dropClockOptionsPanel_.Spacing(10);
+    Add(dropClockOptionsPanel_, MakeDivider());
+    Add(dropClockOptionsPanel_, MakeText(L"3D 时钟样式", 14));
+    Add(dropClockOptionsPanel_, MakeSegments(
+        dropClockStyleSegments_, {L"3D 电子数字", L"3D 机械表盘"}, [this](int index) {
+          SelectSegment(dropClockStyleSegments_, index);
+          const auto style = index == 1
+                                 ? classtime::NotificationSettings::AlertClockStyle::Mechanical3D
+                                 : classtime::NotificationSettings::AlertClockStyle::Digital3D;
+          auto settings = Services::Instance().config().notifications;
+          if (settings.dropClockStyle == style) return;
+          settings.dropClockStyle = style;
+          Services::Instance().UpdateNotifications(settings);
+        }));
+    Add(dropClockOptionsPanel_, MakeText(L"掉落位置", 14));
+    Add(dropClockOptionsPanel_, MakeSegments(
+        dropClockPositionSegments_, {L"顶部居中", L"右上角", L"左上角"}, [this](int index) {
+          SelectSegment(dropClockPositionSegments_, index);
+          using Pos = classtime::NotificationSettings::AlertClockPosition;
+          constexpr Pos positions[] = {Pos::TopCenter, Pos::TopRight, Pos::TopLeft};
+          auto settings = Services::Instance().config().notifications;
+          if (settings.dropClockPosition == positions[index]) return;
+          settings.dropClockPosition = positions[index];
+          Services::Instance().UpdateNotifications(settings);
+        }));
+    Add(dropClockOptionsPanel_, MakeText(L"3D 时钟皮肤", 14));
+    {
+      using Skin = classtime::NotificationSettings::AlertClockSkin;
+      struct SkinChoice {
+        Skin skin;
+        const wchar_t* label;
+      };
+      constexpr SkinChoice kSkins[] = {
+          {Skin::Graphite, L"深邃金属"},
+          {Skin::Ivory, L"象牙白瓷"},
+          {Skin::VintageGold, L"复古金铜"},
+          {Skin::CyberNeon, L"霓虹赛博"},
+          {Skin::RetroMatrix, L"复古荧光"},
+          {Skin::OceanBlue, L"海洋蔚蓝"},
+      };
+      dropClockSkinGrid_ = Grid();
+      dropClockSkinGrid_.ColumnSpacing(6);
+      dropClockSkinGrid_.RowSpacing(6);
+      for (int c = 0; c < 3; ++c) {
+        ColumnDefinition col;
+        col.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+        dropClockSkinGrid_.ColumnDefinitions().Append(col);
+      }
+      for (int r = 0; r < 2; ++r) {
+        RowDefinition row;
+        row.Height(GridLengthHelper::Auto());
+        dropClockSkinGrid_.RowDefinitions().Append(row);
+      }
+      for (int i = 0; i < 6; ++i) {
+        const auto preset = WidgetAppearance::GetClockSkinPreset(kSkins[i].skin);
+        Primitives::ToggleButton btn;
+        btn.HorizontalAlignment(HorizontalAlignment::Stretch);
+        btn.HorizontalContentAlignment(HorizontalAlignment::Center);
+        btn.MinHeight(38);
+        btn.Padding(Thickness{8, 6, 8, 6});
+        btn.CornerRadius(CornerRadius{8, 8, 8, 8});
+
+        StackPanel body;
+        body.Orientation(Orientation::Horizontal);
+        body.Spacing(7);
+        body.VerticalAlignment(VerticalAlignment::Center);
+
+        StackPanel swatches;
+        swatches.Orientation(Orientation::Horizontal);
+        swatches.Spacing(2);
+        swatches.VerticalAlignment(VerticalAlignment::Center);
+        for (const auto swatchColor : {preset.body, preset.face, preset.faceText}) {
+          Border dot;
+          dot.Width(9);
+          dot.Height(9);
+          dot.CornerRadius(CornerRadius{4.5, 4.5, 4.5, 4.5});
+          dot.Background(SolidColorBrush(swatchColor));
+          dot.BorderBrush(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(72, 128, 136, 152)));
+          dot.BorderThickness(Thickness{0.75, 0.75, 0.75, 0.75});
+          swatches.Children().Append(dot);
+        }
+        body.Children().Append(swatches);
+        auto name = MakeText(kSkins[i].label, 12.5);
+        name.TextWrapping(TextWrapping::NoWrap);
+        name.VerticalAlignment(VerticalAlignment::Center);
+        body.Children().Append(name);
+        btn.Content(body);
+        Automation::AutomationProperties::SetName(btn, hstring(std::wstring(L"3D 时钟皮肤 ") + kSkins[i].label));
+
+        const Skin chosenSkin = kSkins[i].skin;
+        btn.Click([this, i, chosenSkin](auto const&, auto const&) {
+          SelectSegment(dropClockSkinGrid_, i);
+          auto settings = Services::Instance().config().notifications;
+          if (settings.dropClockSkin == chosenSkin) return;
+          settings.dropClockSkin = chosenSkin;
+          Services::Instance().UpdateNotifications(settings);
+        });
+        Grid::SetRow(btn, i / 3);
+        Grid::SetColumn(btn, i % 3);
+        dropClockSkinGrid_.Children().Append(btn);
+      }
+      Add(dropClockOptionsPanel_, dropClockSkinGrid_);
+    }
+    Add(visualStack, dropClockOptionsPanel_);
+
+    Expander alertColorExpander;
+    alertColorExpander.Header(box_value(L"自定义 3D 时钟与闪光颜色"));
+    alertColorExpander.HorizontalAlignment(HorizontalAlignment::Stretch);
+    alertColorExpander.HorizontalContentAlignment(HorizontalAlignment::Stretch);
+    StackPanel alertColorBody;
+    alertColorBody.Spacing(8);
+    Add(alertColorBody, MakeSegments(
+        alertColorTargetSegments_, {L"机身", L"盘面", L"数字 / 指针", L"强调色", L"闪光"},
+        [this](int index) {
+          alertColorTarget_ = index;
+          RefreshAlertColorEditor();
+        }));
+    alertColorToggle_ = ToggleSwitch();
+    Add(alertColorBody, MakeToggleRow(
+        alertColorToggle_, L"自定义该项颜色", L"关闭时自动跟随当前皮肤或当前时段颜色"));
+    alertColorHint_ = MakeSubtitle(L"");
+    Add(alertColorBody, alertColorHint_);
+    alertColorPicker_ = ColorPicker();
+    alertColorPicker_.IsAlphaEnabled(false);
+    alertColorPicker_.IsMoreButtonVisible(false);
+    alertColorPicker_.Visibility(Visibility::Collapsed);
+    Automation::AutomationProperties::SetName(alertColorPicker_, L"视觉提醒自定义颜色");
+    Add(alertColorBody, alertColorPicker_);
+    auto resetAlertColors = Button();
+    resetAlertColors.Content(box_value(hstring(L"恢复当前皮肤默认颜色")));
+    StyleAction(resetAlertColors, false, true);
+    resetAlertColors.HorizontalAlignment(HorizontalAlignment::Left);
+    resetAlertColors.Click([this](auto const&, auto const&) {
+      if (alertColorTimer_) alertColorTimer_.Stop();
+      pendingAlertColors_.fill(std::nullopt);
+      auto settings = Services::Instance().config().notifications;
+      settings.screenEdgeFlashColor.clear();
+      settings.dropClockBodyColor.clear();
+      settings.dropClockFaceColor.clear();
+      settings.dropClockTextColor.clear();
+      settings.dropClockAccentColor.clear();
+      Services::Instance().UpdateNotifications(settings);
+      RefreshAlertColorEditor();
+      RefreshVisualPreview();
+    });
+    Add(alertColorBody, resetAlertColors);
+    alertColorExpander.Content(alertColorBody);
+    Add(visualStack, alertColorExpander);
+
+    Add(visualStack, MakeDivider());
+
+    auto visualTestRow = StackPanel();
+    visualTestRow.Orientation(Orientation::Horizontal);
+    visualTestRow.Spacing(10);
+    auto testVisual = Button();
+    testVisual.Content(box_value(hstring(L"测试视觉提醒")));
+    StyleAction(testVisual);
+    testVisual.Click([this](auto const&, auto const&) {
+      CommitPhaseColors();
+      CommitAlertColors();
+      const bool triggered = testVisualAlertRequested_ && testVisualAlertRequested_();
+      visualTestResultText_.Text(hstring(
+          triggered ? L"已触发预览：边缘柔光不遮挡画面，悬停 3D 时钟可暂停收回、点击可立即关闭。"
+                    : L"请先开启“全屏边缘闪光提醒”或“掉落 3D 放大时钟提醒”后再预览。"));
+    });
+    visualTestRow.Children().Append(testVisual);
+    Add(visualStack, visualTestRow);
+    visualTestResultText_ = MakeSubtitle(
+        L"作为系统通知的补充呈现，遵守“启用作息提醒”“临时暂停”及全屏隐藏设置。");
+    Add(visualStack, visualTestResultText_);
+    visualCard.Child(visualStack);
+    Add(notificationsStack, visualCard);
 
     Add(notificationsStack, MakeCardTitle(L"系统通知"));
     auto checkCard = MakeCard();
@@ -2006,6 +2449,38 @@ void SettingsWindow::Build() {
     presentation.visible = visibleToggle_.IsOn();
     Services::Instance().UpdatePresentation(presentation);
   });
+  hideInFullscreenToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
+                                                          [this](auto const&, auto const&) {
+    if (syncing_) return;
+    auto presentation = Services::Instance().config().presentation;
+    if (presentation.hideInFullscreen == hideInFullscreenToggle_.IsOn()) return;
+    presentation.hideInFullscreen = hideInFullscreenToggle_.IsOn();
+    Services::Instance().UpdatePresentation(presentation);
+  });
+  coverTaskbarToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
+                                                      [this](auto const&, auto const&) {
+    if (syncing_) return;
+    auto presentation = Services::Instance().config().presentation;
+    if (presentation.coverTaskbar == coverTaskbarToggle_.IsOn()) return;
+    presentation.coverTaskbar = coverTaskbarToggle_.IsOn();
+    Services::Instance().UpdatePresentation(presentation);
+  });
+  screenEdgeGradientToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
+                                                            [this](auto const&, auto const&) {
+    if (syncing_) return;
+    auto presentation = Services::Instance().config().presentation;
+    if (presentation.screenEdgeGradient == screenEdgeGradientToggle_.IsOn()) return;
+    presentation.screenEdgeGradient = screenEdgeGradientToggle_.IsOn();
+    Services::Instance().UpdatePresentation(presentation);
+  });
+  screenEdgeHighlightToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
+                                                             [this](auto const&, auto const&) {
+    if (syncing_) return;
+    auto presentation = Services::Instance().config().presentation;
+    if (presentation.screenEdgeHighlight == screenEdgeHighlightToggle_.IsOn()) return;
+    presentation.screenEdgeHighlight = screenEdgeHighlightToggle_.IsOn();
+    Services::Instance().UpdatePresentation(presentation);
+  });
   edgeAutoHideToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
                                                       [this](auto const&, auto const&) {
     if (syncing_) return;
@@ -2071,6 +2546,42 @@ void SettingsWindow::Build() {
     }
     barColorTimer_.Stop();
     barColorTimer_.Start();
+  });
+  phaseColorToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
+                                                      [this](auto const&, auto const&) {
+    if (syncing_) return;
+    const int target = std::clamp(phaseColorTarget_, 0, 2);
+    if (phaseColorToggle_.IsOn()) {
+      const auto defPalette = WidgetAppearance::CurrentPalette();
+      const auto fallbackColor =
+          target == 0 ? defPalette.accent : (target == 1 ? defPalette.rest : defPalette.lunch);
+      const std::string initialHex = pendingPhaseColors_[target].value_or(
+          WidgetAppearance::ColorToHex(fallbackColor));
+      pendingPhaseColors_[target] = initialHex;
+      RefreshPhaseColorEditor();
+      RefreshDisplayPreview(Services::Instance().config().presentation);
+      CommitPhaseColors();
+      return;
+    }
+    pendingPhaseColors_[target] = std::string{};
+    RefreshPhaseColorEditor();
+    RefreshDisplayPreview(Services::Instance().config().presentation);
+    CommitPhaseColors();
+  });
+  phaseColorPicker_.ColorChanged([this](auto const&, auto const& args) {
+    if (syncing_) return;
+    const int target = std::clamp(phaseColorTarget_, 0, 2);
+    pendingPhaseColors_[target] = WidgetAppearance::ColorToHex(args.NewColor());
+    phaseColorHint_.Text(hstring(L"当前使用自定义颜色：#" + ToWide(*pendingPhaseColors_[target])));
+    RefreshDisplayPreview(Services::Instance().config().presentation);
+    if (!phaseColorTimer_) {
+      phaseColorTimer_ = window_.DispatcherQueue().CreateTimer();
+      phaseColorTimer_.IsRepeating(false);
+      phaseColorTimer_.Interval(std::chrono::milliseconds(180));
+      phaseColorTimer_.Tick([this](auto const&, auto const&) { CommitPhaseColors(); });
+    }
+    phaseColorTimer_.Stop();
+    phaseColorTimer_.Start();
   });
   templateNameBox_.TextChanged([this](auto const&, auto const&) {
     if (syncing_) return;
@@ -2203,6 +2714,78 @@ void SettingsWindow::Build() {
   focusToggle_.Toggled(categoryHandler);
   restToggle_.Toggled(categoryHandler);
   lunchToggle_.Toggled(categoryHandler);
+  screenEdgeFlashToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
+                                                         [this](auto const&, auto const&) {
+    if (syncing_) return;
+    auto settings = Services::Instance().config().notifications;
+    if (settings.screenEdgeFlash == screenEdgeFlashToggle_.IsOn()) return;
+    settings.screenEdgeFlash = screenEdgeFlashToggle_.IsOn();
+    Services::Instance().UpdateNotifications(settings);
+  });
+  dropClockToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
+                                                     [this](auto const&, auto const&) {
+    if (syncing_) return;
+    auto settings = Services::Instance().config().notifications;
+    if (settings.dropClockAlert == dropClockToggle_.IsOn()) return;
+    settings.dropClockAlert = dropClockToggle_.IsOn();
+    Services::Instance().UpdateNotifications(settings);
+  });
+  alertColorToggle_.RegisterPropertyChangedCallback(ToggleSwitch::IsOnProperty(),
+                                                      [this](auto const&, auto const&) {
+    if (syncing_) return;
+    const int target = std::clamp(alertColorTarget_, 0, 4);
+    if (alertColorToggle_.IsOn()) {
+      const auto& config = Services::Instance().config();
+      const auto preset = WidgetAppearance::GetClockSkinPreset(config.notifications.dropClockSkin);
+      const auto palette = WidgetAppearance::ResolvePalette(config.presentation);
+      const auto snapColor = Services::Instance().snapshot().current
+                                 ? WidgetAppearance::KindColor(
+                                       palette, Services::Instance().snapshot().current->kind)
+                                 : palette.accent;
+      Windows::UI::Color fallbackColor = snapColor;
+      if (target == 0) {
+        fallbackColor = preset.body;
+      } else if (target == 1) {
+        fallbackColor = preset.face;
+      } else if (target == 2) {
+        const std::string faceHex =
+            pendingAlertColors_[1].value_or(config.notifications.dropClockFaceColor);
+        if (!faceHex.empty()) {
+          const auto face = WidgetAppearance::ParseHexColor(faceHex);
+          fallbackColor = WidgetAppearance::IsLightColor(face)
+                              ? Windows::UI::ColorHelper::FromArgb(255, 22, 27, 38)
+                              : Windows::UI::ColorHelper::FromArgb(255, 244, 248, 255);
+        } else {
+          fallbackColor = preset.faceText;
+        }
+      }
+      pendingAlertColors_[target] = pendingAlertColors_[target].value_or(
+          WidgetAppearance::ColorToHex(fallbackColor));
+      RefreshAlertColorEditor();
+      RefreshVisualPreview();
+      CommitAlertColors();
+      return;
+    }
+    pendingAlertColors_[target] = std::string{};
+    RefreshAlertColorEditor();
+    RefreshVisualPreview();
+    CommitAlertColors();
+  });
+  alertColorPicker_.ColorChanged([this](auto const&, auto const& args) {
+    if (syncing_) return;
+    const int target = std::clamp(alertColorTarget_, 0, 4);
+    pendingAlertColors_[target] = WidgetAppearance::ColorToHex(args.NewColor());
+    alertColorHint_.Text(hstring(L"当前使用自定义颜色：#" + ToWide(*pendingAlertColors_[target])));
+    RefreshVisualPreview();
+    if (!alertColorTimer_) {
+      alertColorTimer_ = window_.DispatcherQueue().CreateTimer();
+      alertColorTimer_.IsRepeating(false);
+      alertColorTimer_.Interval(std::chrono::milliseconds(180));
+      alertColorTimer_.Tick([this](auto const&, auto const&) { CommitAlertColors(); });
+    }
+    alertColorTimer_.Stop();
+    alertColorTimer_.Start();
+  });
 
   startupToggle_.Toggled([this](auto const&, auto const&) {
     if (syncing_) return;
@@ -2964,6 +3547,10 @@ void SettingsWindow::RefreshDisplayControls() {
                 presentation.screenEdgeColors == Presentation::ScreenEdgeColors::Schedule ? 0 : 1);
   screenEdgeColorPanel_.Visibility(presentation.scope == Presentation::Scope::AllDay
                                       ? Visibility::Visible : Visibility::Collapsed);
+  screenEdgeGradientRow_.Visibility(
+      presentation.scope == Presentation::Scope::AllDay &&
+              presentation.screenEdgeColors == Presentation::ScreenEdgeColors::Schedule
+          ? Visibility::Visible : Visibility::Collapsed);
   const int edgeIndex = presentation.edge == Presentation::Edge::Top ? 0
                         : presentation.edge == Presentation::Edge::Bottom ? 1
                         : presentation.edge == Presentation::Edge::Left ? 2
@@ -2972,7 +3559,11 @@ void SettingsWindow::RefreshDisplayControls() {
   RefreshDisplayMonitors();
   ApplyDisplayPanelVisibility(screenEdge, true);
   screenEdgeSlider_.Value(pendingThickness_.value_or(presentation.screenEdgeThickness));
+  screenEdgeGradientToggle_.IsOn(presentation.screenEdgeGradient);
+  screenEdgeHighlightToggle_.IsOn(presentation.screenEdgeHighlight);
   visibleToggle_.IsOn(presentation.visible);
+  hideInFullscreenToggle_.IsOn(presentation.hideInFullscreen);
+  coverTaskbarToggle_.IsOn(presentation.coverTaskbar);
   edgeAutoHideToggle_.IsOn(presentation.autoHideAtEdge);
   flushToggle_.IsOn(presentation.flushWithEdge);
   dockBehavior_.Visibility(screenEdge ? Visibility::Collapsed : Visibility::Visible);
@@ -2998,6 +3589,7 @@ void SettingsWindow::RefreshDisplayControls() {
   }
   syncing_ = wasSyncing;
 
+  RefreshPhaseColorEditor();
   RefreshDisplayPreview(presentation);
   RefreshPreviewSummary();
 }
@@ -3140,6 +3732,57 @@ void SettingsWindow::CommitBarBackground() {
   Services::Instance().UpdatePresentation(presentation);
 }
 
+void SettingsWindow::RefreshPhaseColorEditor() {
+  if (!phaseColorTargetSegments_ || !phaseColorToggle_ || !phaseColorPicker_) return;
+  const bool wasSyncing = std::exchange(syncing_, true);
+  const int target = std::clamp(phaseColorTarget_, 0, 2);
+  SelectSegment(phaseColorTargetSegments_, target);
+  const auto& presentation = Services::Instance().config().presentation;
+  const std::string savedHex =
+      target == 0 ? presentation.focusColor
+                  : (target == 1 ? presentation.restColor : presentation.lunchColor);
+  const std::string activeHex = pendingPhaseColors_[target].value_or(savedHex);
+  const bool custom = !activeHex.empty();
+  phaseColorToggle_.IsOn(custom);
+  phaseColorPicker_.Visibility(custom ? Visibility::Visible : Visibility::Collapsed);
+  if (custom) {
+    phaseColorPicker_.Color(WidgetAppearance::ParseHexColor(activeHex));
+    phaseColorHint_.Text(hstring(L"当前使用自定义颜色：#" + ToWide(activeHex)));
+  } else {
+    phaseColorHint_.Text(
+        target == 0 ? L"当前为默认：跟随 Windows 系统强调色"
+                    : (target == 1 ? L"当前为默认：#3FA796（柔和青绿）"
+                                   : L"当前为默认：#E0A458（暖琥珀）"));
+  }
+  syncing_ = wasSyncing;
+}
+
+void SettingsWindow::CommitPhaseColors() {
+  if (phaseColorTimer_) phaseColorTimer_.Stop();
+  if (!pendingPhaseColors_[0] && !pendingPhaseColors_[1] && !pendingPhaseColors_[2]) return;
+  auto presentation = Services::Instance().config().presentation;
+  bool changed = false;
+  if (auto hex = std::exchange(pendingPhaseColors_[0], std::nullopt)) {
+    if (presentation.focusColor != *hex) {
+      presentation.focusColor = *hex;
+      changed = true;
+    }
+  }
+  if (auto hex = std::exchange(pendingPhaseColors_[1], std::nullopt)) {
+    if (presentation.restColor != *hex) {
+      presentation.restColor = *hex;
+      changed = true;
+    }
+  }
+  if (auto hex = std::exchange(pendingPhaseColors_[2], std::nullopt)) {
+    if (presentation.lunchColor != *hex) {
+      presentation.lunchColor = *hex;
+      changed = true;
+    }
+  }
+  if (changed) Services::Instance().UpdatePresentation(presentation);
+}
+
 void SettingsWindow::CommitTemplateName() {
   if (templateNameTimer_) templateNameTimer_.Stop();
   const std::wstring name = std::exchange(pendingTemplateName_, std::wstring{});
@@ -3168,12 +3811,16 @@ void SettingsWindow::StartPreviewRefresh() {
 
 void SettingsWindow::StopPreviewRefresh() {
   if (previewRefreshTimer_) previewRefreshTimer_.Stop();
+  Motion::Stop(previewHighlightMotion_);
 }
 
 void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation) {
   auto presentation = savedPresentation;
   if (pendingBarLength_) presentation.barLengthDip = *pendingBarLength_;
   if (pendingBarBackground_) presentation.barBackground = *pendingBarBackground_;
+  if (pendingPhaseColors_[0]) presentation.focusColor = *pendingPhaseColors_[0];
+  if (pendingPhaseColors_[1]) presentation.restColor = *pendingPhaseColors_[1];
+  if (pendingPhaseColors_[2]) presentation.lunchColor = *pendingPhaseColors_[2];
   using View = Presentation::View;
   const int thickness = pendingThickness_.value_or(presentation.screenEdgeThickness);
   screenEdgeValue_.Text(std::to_wstring(thickness));
@@ -3182,13 +3829,16 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation
   const auto now = NowClock();
   const auto plan = Services::Instance().PlanFor(now);
   const auto state = BuildWidgetState(plan.segments, now, presentation.scope);
-  const auto palette = WidgetAppearance::CurrentPalette();
+  const auto palette = WidgetAppearance::ResolvePalette(presentation);
   const std::string stateSignature = now.DateKey() + ":" +
       std::to_string(now.hour * 3600 + now.minute * 60 + now.second) + ":" +
       std::to_string(plan.revision) + ":" + std::to_string(palette.background.R) + ":" +
       std::to_string(palette.background.G) + ":" + std::to_string(palette.background.B) + ":" +
       std::to_string(palette.accent.R) + ":" + std::to_string(palette.accent.G) + ":" +
-      std::to_string(palette.accent.B) + ":" + std::to_string(palette.foreground.R) + ":" +
+      std::to_string(palette.accent.B) + ":" + std::to_string(palette.rest.R) + ":" +
+      std::to_string(palette.rest.G) + ":" + std::to_string(palette.rest.B) + ":" +
+      std::to_string(palette.lunch.R) + ":" + std::to_string(palette.lunch.G) + ":" +
+      std::to_string(palette.lunch.B) + ":" + std::to_string(palette.foreground.R) + ":" +
       std::to_string(palette.foreground.G) + ":" + std::to_string(palette.foreground.B);
 
   const bool expanded = previewHovered_ && presentation.autoHideAtEdge;
@@ -3201,13 +3851,21 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation
       last.monitorId == presentation.monitorId &&
       last.autoHideAtEdge == presentation.autoHideAtEdge &&
       last.flushWithEdge == presentation.flushWithEdge &&
+      last.coverTaskbar == presentation.coverTaskbar &&
       last.screenEdgeColors == presentation.screenEdgeColors &&
+      last.screenEdgeGradient == presentation.screenEdgeGradient &&
+      last.screenEdgeHighlight == presentation.screenEdgeHighlight &&
       last.barLengthDip == presentation.barLengthDip &&
-      last.barBackground == presentation.barBackground && latest.expanded == expanded &&
+      last.barBackground == presentation.barBackground &&
+      last.focusColor == presentation.focusColor &&
+      last.restColor == presentation.restColor &&
+      last.lunchColor == presentation.lunchColor && latest.expanded == expanded &&
       latest.thickness == thickness && previewStateSignature_ == stateSignature) return;
   previewStateSignature_ = stateSignature;
+  Motion::Stop(previewHighlightMotion_);
+  Storyboard highlightPulse;
   if (previewDetail_) DrawPreviewDetail(previewDetail_, presentation, state, plan.segments,
-                                         now, palette, expanded, thickness);
+                                         now, palette, expanded, thickness, highlightPulse);
 
   // A new click starts from whichever layer is still most visible.
   int sourceIndex = previewStage_;
@@ -3290,7 +3948,8 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation
   constexpr double left = kPreviewScreenLeft;
   constexpr double top = kPreviewScreenTop;
   constexpr double width = kPreviewScreenWidth;
-  constexpr double height = kPreviewScreenHeight;
+  const double height =
+      kPreviewScreenHeight + (presentation.coverTaskbar ? kPreviewTaskbarHeight : 0.0);
   const double center = to.x;
   const double middleY = to.y;
 
@@ -3307,7 +3966,12 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation
   if (presentation.view == View::ScreenEdge) {
     const double line = thickness * 0.58;
     if (allDay && presentation.screenEdgeColors == Presentation::ScreenEdgeColors::Schedule &&
-        DrawScheduleScreenEdge(target, left, top, width, height, line, plan.segments, now, palette)) {
+        DrawScheduleScreenEdge(target, left, top, width, height, line, plan.segments, now, palette,
+                               presentation.screenEdgeGradient)) {
+      if (presentation.screenEdgeHighlight) {
+        DrawScreenEdgeHighlight(target, left, top, width, height, line, state.edgeProgress,
+                                highlightPulse);
+      }
       return;
     }
     rect(left, top, width, line, track);
@@ -3334,6 +3998,10 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation
       const double amount = std::min(filled, height - 2 * line);
       edgeFill(left, top + height - line - amount, line, amount,
                Presentation::Edge::Bottom, true);
+    }
+    if (presentation.screenEdgeHighlight && !plan.segments.empty()) {
+      DrawScreenEdgeHighlight(target, left, top, width, height, line, state.edgeProgress,
+                              highlightPulse);
     }
     return;
   }
@@ -3501,6 +4169,10 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation
   }
   };
   draw();
+  if (highlightPulse.Children().Size() > 0) {
+    previewHighlightMotion_ = highlightPulse;
+    previewHighlightMotion_.Begin();
+  }
 
   previewDrawn_ = true;
   previewAppearance_[targetIndex] = {presentation, expanded, thickness};
@@ -3513,7 +4185,8 @@ void SettingsWindow::RefreshDisplayPreview(const Presentation& savedPresentation
   const bool docked = old.visible && presentation.visible &&
       old.view != View::ScreenEdge && presentation.view != View::ScreenEdge;
   const bool moved = docked && (old.edge != presentation.edge ||
-      old.flushWithEdge != presentation.flushWithEdge || fromX != to.x || fromY != to.y);
+      old.flushWithEdge != presentation.flushWithEdge ||
+      old.coverTaskbar != presentation.coverTaskbar || fromX != to.x || fromY != to.y);
   const auto side = [](Presentation::Edge edge) {
     return edge == Presentation::Edge::Left || edge == Presentation::Edge::Right;
   };
@@ -3588,6 +4261,35 @@ void SettingsWindow::RefreshNotificationControls() {
   focusToggle_.IsOn(settings.focusBoundaries);
   restToggle_.IsOn(settings.restBoundaries);
   lunchToggle_.IsOn(settings.lunchBoundaries);
+  screenEdgeFlashToggle_.IsOn(settings.screenEdgeFlash);
+  dropClockToggle_.IsOn(settings.dropClockAlert);
+  dropClockOptionsPanel_.Visibility(settings.dropClockAlert ? Visibility::Visible
+                                                            : Visibility::Collapsed);
+  SelectSegment(dropClockStyleSegments_,
+                settings.dropClockStyle ==
+                        classtime::NotificationSettings::AlertClockStyle::Mechanical3D
+                    ? 1 : 0);
+  const int clockPosIndex =
+      settings.dropClockPosition ==
+              classtime::NotificationSettings::AlertClockPosition::TopRight
+          ? 1
+      : settings.dropClockPosition ==
+              classtime::NotificationSettings::AlertClockPosition::TopLeft
+          ? 2 : 0;
+  SelectSegment(dropClockPositionSegments_, clockPosIndex);
+  int skinIndex = 0;
+  {
+    using Skin = classtime::NotificationSettings::AlertClockSkin;
+    switch (settings.dropClockSkin) {
+      case Skin::Ivory: skinIndex = 1; break;
+      case Skin::VintageGold: skinIndex = 2; break;
+      case Skin::CyberNeon: skinIndex = 3; break;
+      case Skin::RetroMatrix: skinIndex = 4; break;
+      case Skin::OceanBlue: skinIndex = 5; break;
+      default: skinIndex = 0; break;
+    }
+  }
+  SelectSegment(dropClockSkinGrid_, skinIndex);
   const bool systemEnabled = QuerySystemNotificationsEnabled();
   // 有效提醒 = 主开关开启 且 未暂停 且 系统允许投递；顶部一行写清楚。
   if (!settings.enabled) {
@@ -3613,6 +4315,408 @@ void SettingsWindow::RefreshNotificationControls() {
   const std::wstring label = QueryNotificationPermissionLabel();
   permissionValueText_.Text(hstring(label));
   syncing_ = previous;
+  RefreshAlertColorEditor();
+  RefreshVisualPreview();
+}
+
+void SettingsWindow::RefreshAlertColorEditor() {
+  if (!alertColorTargetSegments_ || !alertColorToggle_ || !alertColorPicker_) return;
+  const bool wasSyncing = std::exchange(syncing_, true);
+  const int target = std::clamp(alertColorTarget_, 0, 4);
+  SelectSegment(alertColorTargetSegments_, target);
+  const auto& notify = Services::Instance().config().notifications;
+  const std::string savedHex =
+      target == 0 ? notify.dropClockBodyColor
+                  : (target == 1 ? notify.dropClockFaceColor
+                                 : (target == 2 ? notify.dropClockTextColor
+                                                : (target == 3 ? notify.dropClockAccentColor
+                                                               : notify.screenEdgeFlashColor)));
+  const std::string activeHex = pendingAlertColors_[target].value_or(savedHex);
+  const bool custom = !activeHex.empty();
+  alertColorToggle_.IsOn(custom);
+  alertColorPicker_.Visibility(custom ? Visibility::Visible : Visibility::Collapsed);
+  if (custom) {
+    alertColorPicker_.Color(WidgetAppearance::ParseHexColor(activeHex));
+    alertColorHint_.Text(hstring(L"当前使用自定义颜色：#" + ToWide(activeHex)));
+  } else {
+    alertColorHint_.Text(
+        target == 0
+            ? L"当前为默认：跟随所选皮肤的机身色（深/浅色会自动适配高光与立体侧壁）"
+            : (target == 1
+                   ? L"当前为默认：跟随所选皮肤的盘面色（控制翻页数字牌面与机械表盘底色）"
+                   : (target == 2
+                          ? L"当前为默认：按盘面与皮肤自动匹配（控制数字、刻度、指针与文字）"
+                          : (target == 3
+                                 ? L"当前为默认：跟随到点时所处时段颜色（控制冒号、秒针、灯带与徽标）"
+                                 : L"当前为默认：跟随到点时所处时段颜色（控制四边柔光呼吸光带）"))));
+  }
+  syncing_ = wasSyncing;
+}
+
+void SettingsWindow::CommitAlertColors() {
+  if (alertColorTimer_) alertColorTimer_.Stop();
+  if (!pendingAlertColors_[0] && !pendingAlertColors_[1] && !pendingAlertColors_[2] &&
+      !pendingAlertColors_[3] && !pendingAlertColors_[4]) return;
+  auto settings = Services::Instance().config().notifications;
+  bool changed = false;
+  if (auto hex = std::exchange(pendingAlertColors_[0], std::nullopt)) {
+    if (settings.dropClockBodyColor != *hex) {
+      settings.dropClockBodyColor = *hex;
+      changed = true;
+    }
+  }
+  if (auto hex = std::exchange(pendingAlertColors_[1], std::nullopt)) {
+    if (settings.dropClockFaceColor != *hex) {
+      settings.dropClockFaceColor = *hex;
+      changed = true;
+    }
+  }
+  if (auto hex = std::exchange(pendingAlertColors_[2], std::nullopt)) {
+    if (settings.dropClockTextColor != *hex) {
+      settings.dropClockTextColor = *hex;
+      changed = true;
+    }
+  }
+  if (auto hex = std::exchange(pendingAlertColors_[3], std::nullopt)) {
+    if (settings.dropClockAccentColor != *hex) {
+      settings.dropClockAccentColor = *hex;
+      changed = true;
+    }
+  }
+  if (auto hex = std::exchange(pendingAlertColors_[4], std::nullopt)) {
+    if (settings.screenEdgeFlashColor != *hex) {
+      settings.screenEdgeFlashColor = *hex;
+      changed = true;
+    }
+  }
+  if (changed) Services::Instance().UpdateNotifications(settings);
+}
+
+void SettingsWindow::RefreshVisualPreview() {
+  if (!visualPreviewCanvas_) return;
+  visualPreviewCanvas_.Children().Clear();
+
+  const auto& config = Services::Instance().config();
+  auto notify = config.notifications;
+  if (pendingAlertColors_[0]) notify.dropClockBodyColor = *pendingAlertColors_[0];
+  if (pendingAlertColors_[1]) notify.dropClockFaceColor = *pendingAlertColors_[1];
+  if (pendingAlertColors_[2]) notify.dropClockTextColor = *pendingAlertColors_[2];
+  if (pendingAlertColors_[3]) notify.dropClockAccentColor = *pendingAlertColors_[3];
+  if (pendingAlertColors_[4]) notify.screenEdgeFlashColor = *pendingAlertColors_[4];
+
+  const auto now = NowClock();
+  const auto plan = Services::Instance().PlanFor(now);
+  const auto snapshot = classtime::Evaluate(plan.segments, now);
+  classtime::SegmentKind kind = classtime::SegmentKind::Focus;
+  std::wstring badge = L"第 1 节";
+  std::wstring title = L"阶段到点预览";
+  std::wstring body = L"到点时将以这种效果提醒你";
+  classtime::TimeOfDay clockTime{now.hour, now.minute};
+  if (snapshot.current) {
+    const auto& seg = *snapshot.current;
+    kind = seg.kind;
+    badge = seg.kind == classtime::SegmentKind::Focus
+                ? L"第 " + std::to_wstring(seg.focusOrdinal) + L" 节"
+                : SegmentKindLabel(seg.kind);
+    body = ToWide(seg.label) + L" · " + FormatClock(seg.start) + L"–" + FormatClock(seg.end);
+  } else if (snapshot.next) {
+    const auto& seg = *snapshot.next;
+    kind = seg.kind;
+    clockTime = seg.start;
+    badge = seg.kind == classtime::SegmentKind::Focus ? L"即将上课" : SegmentKindLabel(seg.kind);
+    body = ToWide(seg.label) + L" · " + FormatClock(seg.start) + L"–" + FormatClock(seg.end);
+  }
+
+  const auto palette = WidgetAppearance::ResolvePalette(config.presentation);
+  const auto phaseAccent = WidgetAppearance::KindColor(palette, kind);
+  const auto app = WidgetAppearance::ResolveClockAppearance(notify, phaseAccent);
+
+  const auto place = [&](UIElement const& item, double x, double y) {
+    Canvas::SetLeft(item, x);
+    Canvas::SetTop(item, y);
+    visualPreviewCanvas_.Children().Append(item);
+  };
+  const auto rect = [&](double x, double y, double w, double h, Brush const& fill,
+                        double radius = 0.0, Brush const& stroke = nullptr,
+                        double strokeWidth = 0.0) {
+    Shapes::Rectangle r;
+    r.Width(std::max(0.0, w));
+    r.Height(std::max(0.0, h));
+    const double cr = std::min({radius, w * 0.5, h * 0.5});
+    r.RadiusX(cr);
+    r.RadiusY(cr);
+    r.Fill(fill);
+    if (stroke && strokeWidth > 0.0) {
+      r.Stroke(stroke);
+      r.StrokeThickness(strokeWidth);
+    }
+    place(r, x, y);
+  };
+  const auto labelAt = [&](const std::wstring& text, double size, Windows::UI::Color color,
+                           double x, double y, double w, double h,
+                           TextAlignment align = TextAlignment::Center,
+                           bool bold = false, const wchar_t* family = L"Microsoft YaHei UI") {
+    TextBlock tb;
+    tb.Text(hstring(text));
+    tb.FontSize(size);
+    tb.FontFamily(FontFamily(family));
+    if (bold) tb.FontWeight(Microsoft::UI::Text::FontWeights::Bold());
+    tb.Foreground(SolidColorBrush(color));
+    tb.Width(w);
+    tb.Height(h);
+    tb.TextAlignment(align);
+    tb.TextWrapping(TextWrapping::NoWrap);
+    tb.TextTrimming(TextTrimming::CharacterEllipsis);
+    place(tb, x, y);
+  };
+
+  // 1) 示意桌面底框 + 任务栏
+  constexpr double scrX = 16.0, scrY = 8.0, scrW = 388.0, scrH = 190.0;
+  LinearGradientBrush desktopBrush;
+  desktopBrush.StartPoint({0, 0});
+  desktopBrush.EndPoint({1, 1});
+  {
+    GradientStop s0;
+    s0.Offset(0.0);
+    s0.Color(Windows::UI::ColorHelper::FromArgb(255, 29, 36, 52));
+    GradientStop s1;
+    s1.Offset(1.0);
+    s1.Color(Windows::UI::ColorHelper::FromArgb(255, 20, 24, 35));
+    desktopBrush.GradientStops().Append(s0);
+    desktopBrush.GradientStops().Append(s1);
+  }
+  rect(scrX, scrY, scrW, scrH, desktopBrush, 8.0,
+       SolidColorBrush(Windows::UI::ColorHelper::FromArgb(55, 255, 255, 255)), 1.0);
+  rect(scrX + 1.0, scrY + scrH - 13.0, scrW - 2.0, 12.0,
+       SolidColorBrush(Windows::UI::ColorHelper::FromArgb(145, 12, 16, 24)), 2.0);
+
+  // 2) 全屏边缘呼吸闪光示意
+  if (notify.screenEdgeFlash) {
+    const auto softGlow = SolidColorBrush(WidgetAppearance::WithAlpha(app.flash, 120));
+    const auto rimGlow = SolidColorBrush(WidgetAppearance::WithAlpha(app.flash, 235));
+    constexpr double glowD = 12.0;
+    rect(scrX, scrY, scrW, glowD, softGlow);
+    rect(scrX, scrY + scrH - glowD, scrW, glowD, softGlow);
+    rect(scrX, scrY + glowD, glowD, scrH - 2 * glowD, softGlow);
+    rect(scrX + scrW - glowD, scrY + glowD, glowD, scrH - 2 * glowD, softGlow);
+
+    Shapes::Rectangle rim;
+    rim.Width(scrW);
+    rim.Height(scrH);
+    rim.RadiusX(8.0);
+    rim.RadiusY(8.0);
+    rim.Stroke(rimGlow);
+    rim.StrokeThickness(2.2);
+    place(rim, scrX, scrY);
+  }
+
+  // 3) 掉落 3D 时钟实时示意（与真实 3D 时钟共用 ResolveClockAppearance 配色）
+  if (notify.dropClockAlert) {
+    using Pos = classtime::NotificationSettings::AlertClockPosition;
+    using Style = classtime::NotificationSettings::AlertClockStyle;
+    const bool mech = notify.dropClockStyle == Style::Mechanical3D;
+    const double cardW = mech ? 136.0 : 210.0;
+    const double cardH = mech ? 150.0 : 124.0;
+    double cardX = scrX + (scrW - cardW) * 0.5;
+    if (notify.dropClockPosition == Pos::TopLeft) cardX = scrX + 20.0;
+    else if (notify.dropClockPosition == Pos::TopRight) cardX = scrX + scrW - cardW - 20.0;
+    const double cardY = mech ? scrY + 14.0 : scrY + 20.0;
+
+    if (!mech) {
+      // 投影与底部 3D 侧壁厚边
+      rect(cardX + 3.0, cardY + 9.0, cardW, cardH,
+           SolidColorBrush(Windows::UI::ColorHelper::FromArgb(88, 0, 0, 0)), 16.0);
+      rect(cardX, cardY + 5.0, cardW, cardH, SolidColorBrush(app.sideWall), 16.0);
+
+      LinearGradientBrush bodyBrush;
+      bodyBrush.StartPoint({0, 0});
+      bodyBrush.EndPoint({0, 1});
+      GradientStop b0, b1, b2;
+      b0.Offset(0.0);
+      b0.Color(app.bodyTop);
+      b1.Offset(0.55);
+      b1.Color(app.bodyMid);
+      b2.Offset(1.0);
+      b2.Color(app.bodyBottom);
+      bodyBrush.GradientStops().Append(b0);
+      bodyBrush.GradientStops().Append(b1);
+      bodyBrush.GradientStops().Append(b2);
+      rect(cardX, cardY, cardW, cardH, bodyBrush, 16.0, SolidColorBrush(app.rim), 1.0);
+
+      // 顶部强调灯带
+      rect(cardX + 58.0, cardY + 5.0, cardW - 116.0, 3.2, SolidColorBrush(app.accent), 1.6);
+
+      // 左右翻页牌（盘面）
+      const auto drawTile = [&](double tx, const std::wstring& digits) {
+        constexpr double tw = 76.0, th = 58.0;
+        const double ty = cardY + 16.0;
+        rect(tx, ty + th * 0.5, tw, th * 0.5, SolidColorBrush(app.tileBottom), 8.0);
+        rect(tx, ty, tw, th * 0.5 + 4.0, SolidColorBrush(app.tileTop), 8.0);
+        rect(tx, ty, tw, th, SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)),
+             8.0, SolidColorBrush(app.tileBorder), 0.9);
+        rect(tx + 2.0, ty + th * 0.5 - 0.6, tw - 4.0, 1.2, SolidColorBrush(app.hinge));
+        for (const double dotX : {tx + 2.0, tx + tw - 5.0}) {
+          Shapes::Ellipse hingeDot;
+          hingeDot.Width(3.0);
+          hingeDot.Height(4.5);
+          hingeDot.Fill(SolidColorBrush(WidgetAppearance::WithAlpha(app.accent, 180)));
+          place(hingeDot, dotX, ty + th * 0.5 - 2.2);
+        }
+        labelAt(digits, 33.0, app.digit, tx, ty + 6.0, tw, th - 10.0, TextAlignment::Center,
+                true, L"Bahnschrift");
+      };
+      wchar_t hh[8]{}, mm[8]{};
+      swprintf_s(hh, L"%02d", clockTime.hour);
+      swprintf_s(mm, L"%02d", clockTime.minute);
+      drawTile(cardX + 18.0, hh);
+      drawTile(cardX + cardW - 18.0 - 76.0, mm);
+
+      // 冒号双 LED
+      for (const double cy : {cardY + 36.0, cardY + 52.0}) {
+        Shapes::Ellipse dot;
+        dot.Width(5.5);
+        dot.Height(5.5);
+        dot.Fill(SolidColorBrush(app.accent));
+        place(dot, cardX + cardW * 0.5 - 2.75, cy);
+      }
+
+      // 底部徽标与文字
+      rect(cardX + 18.0, cardY + 82.0, 56.0, 16.0,
+           SolidColorBrush(WidgetAppearance::WithAlpha(app.accent, app.lightBody ? 40 : 56)), 8.0,
+           SolidColorBrush(app.accent), 0.9);
+      labelAt(badge, 9.5, app.badgeText, cardX + 20.0, cardY + 83.5, 52.0, 13.0,
+              TextAlignment::Center, true);
+      labelAt(title, 11.0, app.title, cardX + 80.0, cardY + 82.5, cardW - 96.0, 16.0,
+              TextAlignment::Left, true);
+      labelAt(body, 9.2, app.footer, cardX + 14.0, cardY + 102.0, cardW - 28.0, 14.0);
+    } else {
+      constexpr double dialD = 104.0;
+      const double cx = cardX + cardW * 0.5;
+      const double cy = cardY + dialD * 0.5 + 1.0;
+
+      // 3D 表壳阴影、侧壁、金属外圈
+      const auto circleAt = [&](double d, Brush const& fill, double offX = 0.0, double offY = 0.0,
+                                Brush const& stroke = nullptr, double sw = 0.0) {
+        Shapes::Ellipse e;
+        e.Width(d);
+        e.Height(d);
+        e.Fill(fill);
+        if (stroke && sw > 0.0) {
+          e.Stroke(stroke);
+          e.StrokeThickness(sw);
+        }
+        place(e, cx - d * 0.5 + offX, cy - d * 0.5 + offY);
+      };
+      circleAt(dialD, SolidColorBrush(Windows::UI::ColorHelper::FromArgb(88, 0, 0, 0)), 2.0, 7.0);
+      circleAt(dialD, SolidColorBrush(app.sideWall), 0.0, 4.0);
+
+      LinearGradientBrush bezelBrush;
+      bezelBrush.StartPoint({0, 0});
+      bezelBrush.EndPoint({1, 1});
+      GradientStop bz0, bz1, bz2;
+      bz0.Offset(0.0);
+      bz0.Color(app.bezel0);
+      bz1.Offset(0.45);
+      bz1.Color(app.bezel1);
+      bz2.Offset(1.0);
+      bz2.Color(app.bezel2);
+      bezelBrush.GradientStops().Append(bz0);
+      bezelBrush.GradientStops().Append(bz1);
+      bezelBrush.GradientStops().Append(bz2);
+      circleAt(dialD, bezelBrush);
+      circleAt(dialD - 5.5, SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)),
+               0.0, 0.0, SolidColorBrush(app.accent), 1.6);
+
+      LinearGradientBrush dialBrush;
+      dialBrush.StartPoint({0.15, 0.1});
+      dialBrush.EndPoint({0.85, 0.9});
+      GradientStop d0, d1, d2;
+      d0.Offset(0.0);
+      d0.Color(app.dial0);
+      d1.Offset(0.65);
+      d1.Color(app.dial1);
+      d2.Offset(1.0);
+      d2.Color(app.dial2);
+      dialBrush.GradientStops().Append(d0);
+      dialBrush.GradientStops().Append(d1);
+      dialBrush.GradientStops().Append(d2);
+      constexpr double faceR = (dialD - 9.0) * 0.5;
+      circleAt(faceR * 2.0, dialBrush);
+
+      // 12 小时刻度
+      constexpr double kPiPreview = 3.14159265358979323846;
+      for (int i = 0; i < 12; ++i) {
+        const double ang = (i * 30.0 - 90.0) * kPiPreview / 180.0;
+        const float c = static_cast<float>(std::cos(ang));
+        const float s = static_cast<float>(std::sin(ang));
+        const double rOut = faceR - 3.5;
+        const double rIn = faceR - ((i % 3 == 0) ? 9.5 : 6.5);
+        Shapes::Line tick;
+        tick.X1(cx + rIn * c);
+        tick.Y1(cy + rIn * s);
+        tick.X2(cx + rOut * c);
+        tick.Y2(cy + rOut * s);
+        tick.Stroke(SolidColorBrush(i % 3 == 0 ? app.tickMajor : app.tickMinor));
+        tick.StrokeThickness(i % 3 == 0 ? 1.8 : 1.0);
+        visualPreviewCanvas_.Children().Append(tick);
+      }
+      labelAt(L"12", 8.5, app.numeral, cx - 10.0, cy - faceR + 9.0, 20.0, 12.0,
+              TextAlignment::Center, true, L"Bahnschrift");
+      wchar_t smallTime[8]{};
+      swprintf_s(smallTime, L"%02d:%02d", clockTime.hour, clockTime.minute);
+      labelAt(smallTime, 8.0, app.digitalSmall, cx - 18.0, cy + 12.0, 36.0, 12.0,
+              TextAlignment::Center, true, L"Bahnschrift");
+
+      // 时针 / 分针 / 秒针
+      const auto addHand = [&](double deg, double len, double width, Windows::UI::Color color) {
+        const double rad = deg * kPiPreview / 180.0;
+        Shapes::Line line;
+        line.X1(cx - 5.0 * std::cos(rad));
+        line.Y1(cy - 5.0 * std::sin(rad));
+        line.X2(cx + len * std::cos(rad));
+        line.Y2(cy + len * std::sin(rad));
+        line.Stroke(SolidColorBrush(color));
+        line.StrokeThickness(width);
+        line.StrokeStartLineCap(PenLineCap::Round);
+        line.StrokeEndLineCap(PenLineCap::Round);
+        visualPreviewCanvas_.Children().Append(line);
+      };
+      const double minDeg = clockTime.minute * 6.0 - 90.0;
+      const double hourDeg = ((clockTime.hour % 12) + clockTime.minute / 60.0) * 30.0 - 90.0;
+      addHand(hourDeg, faceR * 0.48, 2.8, app.handMain);
+      addHand(minDeg, faceR * 0.72, 2.0, app.handMain);
+      addHand(-90.0, faceR * 0.78, 1.2, app.accent);
+      circleAt(6.0, SolidColorBrush(app.accent));
+      circleAt(2.6, SolidColorBrush(app.tickMajor));
+
+      // 下方铭牌
+      const double plateY = cardY + dialD + 5.0;
+      rect(cardX + 3.0, plateY + 3.5, cardW - 6.0, 38.0,
+           SolidColorBrush(app.sideWall), 9.0);
+      rect(cardX + 3.0, plateY, cardW - 6.0, 38.0, SolidColorBrush(app.plateBg), 9.0,
+           SolidColorBrush(app.plateRim), 0.9);
+      rect(cardX + 9.0, plateY + 8.0, 3.0, 22.0, SolidColorBrush(app.accent), 1.5);
+      labelAt(badge + L" · " + title, 9.8, app.title, cardX + 16.0, plateY + 5.0, cardW - 26.0,
+              14.0, TextAlignment::Left, true);
+      labelAt(body, 8.6, app.footer, cardX + 16.0, plateY + 19.0, cardW - 26.0, 13.0,
+              TextAlignment::Left);
+    }
+  } else if (!notify.screenEdgeFlash) {
+    labelAt(L"开启上方“全屏边缘闪光”或“掉落 3D 放大时钟”即可在此实时预览", 12.0,
+            Windows::UI::ColorHelper::FromArgb(185, 200, 212, 232), scrX + 16.0,
+            scrY + scrH * 0.5 - 10.0, scrW - 32.0, 22.0);
+  }
+
+  if (visualPreviewCaption_) {
+    std::wstring caption = L"实时效果预览：";
+    caption += notify.dropClockAlert
+                   ? (notify.dropClockStyle == classtime::NotificationSettings::AlertClockStyle::Mechanical3D
+                          ? L"3D 机械表盘"
+                          : L"3D 电子数字")
+                   : L"仅边缘闪光";
+    caption += L" · " + badge + L"（" + body + L"）";
+    visualPreviewCaption_.Text(hstring(caption));
+  }
 }
 
 void SettingsWindow::RefreshGeneralControls() {
@@ -3924,6 +5028,18 @@ void SettingsWindow::ShowSection(const std::wstring& tag) {
                                                         : generalScroll_;
   if (selected == requestedSection_) return;
   requestedSection_ = selected;
+  if (selected == scheduleScroll_) {
+    const auto& pres = Services::Instance().config().presentation;
+    const std::array<std::string, 3> currentColors = {pres.focusColor, pres.restColor,
+                                                      pres.lunchColor};
+    if (currentColors != lastSchedulePhaseColors_) {
+      lastSchedulePhaseColors_ = currentColors;
+      RefreshSegments();
+      RefreshTodayOverview();
+    }
+  } else if (selected == notificationsScroll_) {
+    RefreshVisualPreview();
+  }
   if (selected == displayScroll_ && hwnd_ && IsWindowVisible(hwnd_)) StartPreviewRefresh();
   else StopPreviewRefresh();
   if (!activeSection_ || !Motion::Enabled()) {

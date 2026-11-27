@@ -15,7 +15,7 @@
 | 顶部状态栏 `MenuBarController` + `MenuBarPopoverView` | **已编译打包** | `NSStatusItem` 实时动态进度弧模板图标 + 可选等宽剩余时间 / 节次与剩余时间显示；左键展开系统原生 Liquid Glass `NSPopover` 控制面板（自动测高），右键 / Control+点击弹出分级原生 Liquid Glass `NSMenu`（显示形式/显示范围/状态栏/通透度子菜单、打开设置与退出） |
 | 即时通知 `NotificationService` | **源码就绪，待桌面手验** | `UNUserNotificationCenter`（`trigger: nil`）即时投递、同秒“下课+休息开始”合并单条通知；专注/勿扰表现待手工复核 |
 | 边界等待 `BoundaryMonitor` | **已编译打包** | 按下一边界精确休眠 + 60 秒看门狗；监听 `NSWorkspace.didWakeNotification` / 时钟 / 时区 / 跨日变化重锚，30 秒外过期事件跳过 |
-| 应用包与离线镜像 `tools/` | **已构建并校验签名** | 生成 `macos/build/app/ItsClassTime.app`（含 Retina `AppIcon.icns`、`vtool` SDK 校准与随包预设）及 `macos/build/release/ItsClassTime-0.1.1-arm64.dmg`；当前为本地 ad-hoc 签名，未公证 |
+| 应用包与离线镜像 `tools/` | **可构建并校验签名** | 生成 `macos/build/app/ItsClassTime.app`（含 Retina `AppIcon.icns`、`vtool` SDK 校准与随包预设）及 `macos/build/release/ItsClassTime-<版本>-macOS-arm64.dmg`；当前为 ad-hoc 签名，未公证 |
 
 ## 2. 工具链说明：Command Line Tools 独立构建兼容
 
@@ -50,7 +50,7 @@ CLASSTIME_DATA_DIR="/tmp/classtime-dev" CLASSTIME_SHOW_SETTINGS=1 \
 
 ```bash
 ./macos/tools/build-dmg.sh
-# 产物：macos/build/release/ItsClassTime-0.1.1-arm64.dmg
+# 产物：macos/build/release/ItsClassTime-<版本>-macOS-arm64.dmg
 ```
 
 脚本会先执行 220 项共享与对等引擎检查，再以 Release 模式编译并组装 `ItsClassTime.app`（复制 `shared/presets/*.json`、生成多尺寸 `AppIcon.icns`、校准 `LC_BUILD_VERSION` SDK、执行 `codesign --sign -` 校验），最后通过 `hdiutil` 制作带 `Applications` 快捷方式的压缩镜像。

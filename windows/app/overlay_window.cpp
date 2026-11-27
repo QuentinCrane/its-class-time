@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "overlay_window.h"
+#include "display_utils.h"
 #include "services.h"
 #include "ui_motion.h"
 #include "widget_appearance.h"
@@ -41,9 +42,9 @@ constexpr double kHandleHeightDip = 12;
 constexpr double kHandleTrackLengthDip = 64;
 constexpr double kHandleTrackThicknessDip = 4;
 
-using WidgetAppearance::CurrentPalette;
 using WidgetAppearance::KindColor;
 using WidgetAppearance::Palette;
+using WidgetAppearance::ResolvePalette;
 using WidgetAppearance::WithAlpha;
 
 bool IsSideEdge(classtime::PresentationSettings::Edge edge) {
@@ -109,6 +110,37 @@ uint32_t BlendEdgeColors(uint32_t fill, uint32_t track, double coverage) {
   return result;
 }
 
+// 提亮并补足预乘 BGRA 像素的原色饱和度/不透明度，保持色带连贯不“断层”。
+uint32_t EnergizeEdgePixel(uint32_t bgra, double boost) {
+  if (boost <= 0.0) return bgra;
+  const double weight = std::clamp(boost, 0.0, 1.0);
+  const uint32_t alpha = (bgra >> 24) & 255;
+  if (alpha == 0) return bgra;
+  const double inv = 255.0 / static_cast<double>(alpha);
+  const double gain = 1.0 + 0.24 * weight;
+  const uint32_t r = std::min<uint32_t>(255, static_cast<uint32_t>(std::lround(((bgra >> 16) & 255) * inv * gain)));
+  const uint32_t g = std::min<uint32_t>(255, static_cast<uint32_t>(std::lround(((bgra >> 8) & 255) * inv * gain)));
+  const uint32_t b = std::min<uint32_t>(255, static_cast<uint32_t>(std::lround((bgra & 255) * inv * gain)));
+  const uint32_t outAlpha = static_cast<uint32_t>(std::lround(alpha + (255.0 - alpha) * weight));
+  return (outAlpha << 24) | ((r * outAlpha / 255) << 16) |
+         ((g * outAlpha / 255) << 8) | (b * outAlpha / 255);
+}
+
+// 预乘 BGRA 按 Porter-Duff OVER 叠加目标不透明色（白光或前沿暗对比边）。
+uint32_t CompositeOpaqueOver(uint32_t bgra, uint8_t targetR, uint8_t targetG, uint8_t targetB,
+                             double intensity) {
+  if (intensity <= 0.0) return bgra;
+  const double weight = std::clamp(intensity, 0.0, 1.0);
+  const auto mix = [weight](uint32_t from, uint8_t to) {
+    return static_cast<uint32_t>(std::lround(from + (static_cast<double>(to) - from) * weight));
+  };
+  const uint32_t b = mix(bgra & 255, targetB);
+  const uint32_t g = mix((bgra >> 8) & 255, targetG);
+  const uint32_t r = mix((bgra >> 16) & 255, targetR);
+  const uint32_t a = mix((bgra >> 24) & 255, 255);
+  return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
 void RoundProgressTip(uint32_t* pixels, SIZE size, bool horizontal, bool reverse,
                       int filledPixels, uint32_t fill, uint32_t track) {
   const int length = horizontal ? size.cx : size.cy;
@@ -128,9 +160,55 @@ void RoundProgressTip(uint32_t* pixels, SIZE size, bool horizontal, bool reverse
   }
 }
 
+void ApplyStripHighlight(uint32_t* pixels, SIZE size, bool horizontal, bool reverse,
+                         bool enabled, int headPixel, int sideStart, int perimeter,
+                         int thickness, double phase) {
+  if (!enabled || headPixel < 0 || perimeter <= 0 || thickness <= 0) return;
+  const int length = horizontal ? size.cx : size.cy;
+  const int stripThickness = horizontal ? size.cy : size.cx;
+  const auto spec = BuildScreenEdgeHighlightSpec(perimeter, thickness);
+  const int from = std::clamp(
+      static_cast<int>(std::floor(headPixel - spec.tailLength - sideStart)), 0, length);
+  const int to = std::clamp(
+      static_cast<int>(std::ceil(headPixel + spec.leadLength - sideStart)), 0, length);
+  for (int along = from; along < to; ++along) {
+    const double position = sideStart + along + 0.5;
+    const auto sample = SampleScreenEdgeHighlight(
+        position, static_cast<double>(headPixel), static_cast<double>(perimeter),
+        static_cast<double>(thickness), phase);
+    if (sample.boost <= 0.0 && sample.core <= 0.0 && sample.lip <= 0.0) continue;
+    const double delta = static_cast<double>(headPixel) - position;
+    const bool nearTip = delta >= 0.0 && delta <= std::max(2.5, thickness * 0.35);
+    const int pos = reverse ? length - 1 - along : along;
+    for (int cross = 0; cross < stripThickness; ++cross) {
+      auto& pixel = horizontal ? pixels[cross * size.cx + pos]
+                               : pixels[pos * size.cx + cross];
+      if (sample.lip > 0.0) {
+        pixel = CompositeOpaqueOver(pixel, 18, 24, 38, sample.lip);
+        continue;
+      }
+      if (sample.boost > 0.0) {
+        pixel = EnergizeEdgePixel(pixel, sample.boost);
+      }
+      if (sample.core > 0.0) {
+        // 横截面呈管状高光：条芯白亮，外缘保留彩色，避免看起来像“断层”。
+        const double crossNorm =
+            std::fabs((cross + 0.5) / (stripThickness * 0.5) - 1.0);
+        const double edgeFalloff = stripThickness <= 5 ? 0.55 : 0.80;
+        double crossMask = std::clamp(1.0 - edgeFalloff * crossNorm * crossNorm, 0.20, 1.0);
+        if (nearTip) crossMask = std::max(crossMask, 0.72);
+        pixel = CompositeOpaqueOver(pixel, 255, 255, 255, sample.core * crossMask);
+      }
+    }
+  }
+}
+
 bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool reverse,
                      int filledPixels, uint32_t fill, uint32_t track,
-                     const std::vector<uint32_t>& timeline, int alpha = 255) {
+                     const std::vector<uint32_t>& timeline,
+                     bool highlightEnabled, int highlightHead, int highlightSideStart,
+                     int highlightPerimeter, int highlightThickness, double highlightPhase,
+                     int alpha = 255) {
   SIZE size{bounds.right - bounds.left, bounds.bottom - bounds.top};
   BITMAPINFO info{};
   info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -178,6 +256,9 @@ bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool revers
         RoundProgressTip(static_cast<uint32_t*>(bitmapData), size, horizontal, reverse,
                          filledPixels, fill, track);
       }
+      ApplyStripHighlight(static_cast<uint32_t*>(bitmapData), size, horizontal, reverse,
+                          highlightEnabled, highlightHead, highlightSideStart,
+                          highlightPerimeter, highlightThickness, highlightPhase);
       POINT origin{};
       POINT position{bounds.left, bounds.top};
       // SourceConstantAlpha 与逐像素透明度相乘：淡入淡出只需重提交，不必改像素。
@@ -207,33 +288,30 @@ std::wstring FormatElapsed(int seconds) {
   return time;
 }
 
-HMONITOR FindMonitor(const std::string& id) {
-  struct Search {
-    std::wstring device;
-    HMONITOR monitor = nullptr;
-  } search{ToWide(id)};
-  if (!search.device.empty()) {
-    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR monitor, HDC, LPRECT, LPARAM data) -> BOOL {
-      auto& search = *reinterpret_cast<Search*>(data);
-      MONITORINFOEXW info{};
-      info.cbSize = sizeof(info);
-      if (GetMonitorInfoW(monitor, &info) && search.device == info.szDevice) {
-        search.monitor = monitor;
-        return FALSE;
-      }
-      return TRUE;
-    }, reinterpret_cast<LPARAM>(&search));
-  }
-  return search.monitor ? search.monitor : MonitorFromPoint(POINT{}, MONITOR_DEFAULTTOPRIMARY);
-}
-
 POINT ClampToWorkArea(POINT point, const RECT& work, int width, int height) {
   point.x = std::clamp(point.x, work.left, std::max(work.left, work.right - width));
   point.y = std::clamp(point.y, work.top, std::max(work.top, work.bottom - height));
   return point;
 }
 
+bool IsTaskbarAboveWindow(HWND hwnd) {
+  if (!hwnd || !IsWindowVisible(hwnd)) return false;
+  for (HWND cur = GetWindow(hwnd, GW_HWNDPREV); cur != nullptr;
+       cur = GetWindow(cur, GW_HWNDPREV)) {
+    if (!IsWindowVisible(cur)) continue;
+    wchar_t className[64]{};
+    if (GetClassNameW(cur, className, 64) <= 0) continue;
+    if (wcscmp(className, L"Shell_TrayWnd") == 0 ||
+        wcscmp(className, L"Shell_SecondaryTrayWnd") == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
+
+OverlayWindow* OverlayWindow::activeInstance_ = nullptr;
 
 OverlayWindow::OverlayWindow() { CreateNativeWindow(); }
 
@@ -266,7 +344,7 @@ void OverlayWindow::CreateNativeWindow() {
   BuildBar();
   BuildRing();
   BuildDetailCard();
-  const auto palette = CurrentPalette();
+  const auto palette = ResolvePalette(Services::Instance().config().presentation);
   edgeHandle_ = Border();
   edgeHandle_.Background(WidgetAppearance::Surface(palette.background));
   edgeHandle_.CornerRadius({6, 6, 6, 6});
@@ -310,11 +388,16 @@ void OverlayWindow::CreateNativeWindow() {
   }
   window_.SizeChanged([this](auto const&, auto const&) { UpdateWindowShape(); });
 
+  activeInstance_ = this;
+  foregroundHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
+                                    &OverlayWindow::OnForegroundChanged, 0, 0,
+                                    WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+
   ApplyPresentation();
 }
 
 void OverlayWindow::BuildBar() {
-  const Palette palette = CurrentPalette();
+  const Palette palette = ResolvePalette(Services::Instance().config().presentation);
 
   barRoot_ = Border();
   barRoot_.CornerRadius(WidgetAppearance::DockCorners(16, edge_, flushWithEdge_));
@@ -334,7 +417,7 @@ void OverlayWindow::BuildBar() {
 
 void OverlayWindow::ApplyBarSurface() {
   if (!barRoot_) return;
-  const Palette palette = CurrentPalette();
+  const Palette palette = ResolvePalette(Services::Instance().config().presentation);
   Windows::UI::Color color = palette.background;
   if (!barBackgroundHex_.empty()) color = WidgetAppearance::ParseHexColor(barBackgroundHex_);
   // 系统背景色或自定义色变化（含深浅色切换）时才重建画刷。
@@ -354,7 +437,7 @@ void OverlayWindow::ApplyBarSurface() {
 }
 
 void OverlayWindow::BuildRing() {
-  const auto palette = CurrentPalette();
+  const auto palette = ResolvePalette(Services::Instance().config().presentation);
   auto dial = Canvas();
   dial.Width(kRingDiameterDip);
   dial.Height(kRingDiameterDip);
@@ -427,7 +510,7 @@ void OverlayWindow::BuildRing() {
 }
 
 void OverlayWindow::BuildDetailCard() {
-  const auto palette = CurrentPalette();
+  const auto palette = ResolvePalette(Services::Instance().config().presentation);
   const auto secondary = WithAlpha(palette.foreground, 175);
 
   detailCard_ = Border();
@@ -610,7 +693,8 @@ void OverlayWindow::RefreshDetail() {
                             title.compare(0, label.size(), label) == 0;
   detailRange_.Text(genericLabel ? range : label + L"  " + range);
 
-  const auto accent = KindColor(CurrentPalette(), selected->kind);
+  const auto accent = KindColor(
+      ResolvePalette(services.config().presentation), selected->kind);
   detailMarker_.Background(SolidColorBrush(accent));
   detailFill_.Background(SolidColorBrush(accent));
   detailFill_.Width(kDetailTrackWidth * progress);
@@ -774,15 +858,16 @@ void OverlayWindow::CenterOverlay() {
     LayoutWindow();
     return;
   }
+  const RECT work = TargetBounds(info);
   const int width = bounds.right - bounds.left;
   const int height = bounds.bottom - bounds.top;
   POINT target{bounds.left, bounds.top};
   if (IsSideEdge(edge_)) {
-    target.y = info.rcWork.top + (info.rcWork.bottom - info.rcWork.top - height) / 2;
+    target.y = work.top + (work.bottom - work.top - height) / 2;
   } else {
-    target.x = info.rcWork.left + (info.rcWork.right - info.rcWork.left - width) / 2;
+    target.x = work.left + (work.right - work.left - width) / 2;
   }
-  SnapTo(ClampToWorkArea(target, info.rcWork, width, height), info.rcWork);
+  SnapTo(ClampToWorkArea(target, work, width, height), work);
 }
 
 void OverlayWindow::FinishDrag(bool savePosition) {
@@ -795,6 +880,7 @@ void OverlayWindow::FinishDrag(bool savePosition) {
   }
   if (!savePosition) {
     LayoutWindow();
+    ApplyState();
     QueueEdgeCollapse();
     return;
   }
@@ -802,14 +888,17 @@ void OverlayWindow::FinishDrag(bool savePosition) {
   RECT bounds{};
   MONITORINFOEXW info{};
   info.cbSize = sizeof(info);
-  if (!GetWindowRect(hwnd_, &bounds) ||
-      !GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &info)) {
+  const HMONITOR currentMonitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+  if (!GetWindowRect(hwnd_, &bounds) || !GetMonitorInfoW(currentMonitor, &info)) {
     LayoutWindow();
+    ApplyState();
     QueueEdgeCollapse();
     return;
   }
+  const HMONITOR previousMonitor = DisplayUtils::FindMonitor(monitorId_);
+  const bool movedMonitor = currentMonitor != previousMonitor;
   dpiScale_ = root_.XamlRoot().RasterizationScale();
-  const RECT& work = info.rcWork;
+  const RECT work = TargetBounds(info);
   const int width = bounds.right - bounds.left;
   const int height = bounds.bottom - bounds.top;
   const int inset = (autoHideAtEdge_ || flushWithEdge_)
@@ -822,23 +911,33 @@ void OverlayWindow::FinishDrag(bool savePosition) {
   const int oldCenterX = bounds.left + width / 2;
   const int oldCenterY = bounds.top + height / 2;
 
-  // 取最近的一条边；四个方向一视同仁，避免只比较上下。
+  POINT cursor{oldCenterX, oldCenterY};
+  GetCursorPos(&cursor);
+  const auto edgeScore = [](long boundsDistance, long cursorDistance) {
+    return std::pair<long, long>{std::max(0L, boundsDistance), std::max(0L, cursorDistance)};
+  };
+
+  // 取最近的一条边；拖出屏幕边界时按指针所在边缘平局决胜，避免长条滑过边角误判。
   auto targetEdge = classtime::PresentationSettings::Edge::Bottom;
-  int nearest = std::abs(work.bottom - bounds.bottom);
-  if (const int distance = std::abs(bounds.top - work.top); distance < nearest) {
-    nearest = distance;
+  auto nearest = edgeScore(work.bottom - bounds.bottom, work.bottom - cursor.y);
+  if (const auto score = edgeScore(bounds.top - work.top, cursor.y - work.top); score < nearest) {
+    nearest = score;
     targetEdge = classtime::PresentationSettings::Edge::Top;
   }
-  if (const int distance = std::abs(bounds.left - work.left); distance < nearest) {
-    nearest = distance;
+  if (const auto score = edgeScore(bounds.left - work.left, cursor.x - work.left); score < nearest) {
+    nearest = score;
     targetEdge = classtime::PresentationSettings::Edge::Left;
   }
-  if (const int distance = std::abs(work.right - bounds.right); distance < nearest) {
+  if (const auto score = edgeScore(work.right - bounds.right, work.right - cursor.x);
+      score < nearest) {
     targetEdge = classtime::PresentationSettings::Edge::Right;
   }
 
   const bool wasSide = IsSideEdge(edge_);
   const bool nowSide = IsSideEdge(targetEdge);
+  const bool edgeChanged = targetEdge != edge_;
+  const Layer outgoing = CurrentLayer();
+
   auto& services = Services::Instance();
   auto presentation = services.config().presentation;
   edge_ = presentation.edge = targetEdge;
@@ -856,12 +955,23 @@ void OverlayWindow::FinishDrag(bool savePosition) {
   }
   services.UpdatePresentation(presentation);
 
-  // 横排改竖排（或反过来）时窗口尺寸会变，直接按新布局落位；
-  // 同方向换边才做回弹动画。
-  if (wasSide != nowSide) {
+  // 横排改竖排（或跨屏/缩放变化）时同步更新样式、尺寸、圆角区域与分节排列。
+  if (wasSide != nowSide || movedMonitor) {
+    const RECT target = ComputeLayoutRect();
+    if (!movedMonitor && Motion::Enabled() && IsWindowVisible(hwnd_) && !IsRectEmpty(&target)) {
+      AnimateWindowRect(target, outgoing);
+      return;
+    }
     LayoutWindow();
+    ApplyState();
     QueueEdgeCollapse();
     return;
+  }
+
+  // 同方向换边（底↔顶 / 左↔右）时贴边圆角方向与 Win32 裁剪区域也必须立即同步。
+  if (edgeChanged) {
+    ApplyLayoutStyle();
+    UpdateWindowShape();
   }
 
   POINT target{};
@@ -883,8 +993,8 @@ void OverlayWindow::SnapTo(POINT target, RECT workArea) {
   RECT bounds{};
   if (!GetWindowRect(hwnd_, &bounds)) return;
   const auto move = [this](POINT point) {
-    SetWindowPos(hwnd_, nullptr, point.x, point.y, 0, 0,
-                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(hwnd_, coverTaskbar_ ? HWND_TOPMOST : nullptr, point.x, point.y, 0, 0,
+                 SWP_NOSIZE | (coverTaskbar_ ? 0 : SWP_NOZORDER) | SWP_NOACTIVATE);
   };
   StopWindowMotion();
   StopSnap();
@@ -1012,7 +1122,7 @@ void OverlayWindow::AnimateWindowRect(const RECT& target, Layer outgoing) {
     const POINT position = ClampToWorkArea(
         {std::lround(from.left + oldWidth / 2.0 + dx * travel - frameWidth / 2.0),
          std::lround(from.top + oldHeight / 2.0 + dy * travel - frameHeight / 2.0)},
-        monitor.rcWork, frameWidth, frameHeight);
+        TargetBounds(monitor), frameWidth, frameHeight);
     const RECT rect{position.x, position.y, position.x + frameWidth, position.y + frameHeight};
     if (swapNow) {
       swapped = true;
@@ -1206,15 +1316,14 @@ void OverlayWindow::ApplyPresentation() {
   const bool wasScreenEdge = previousView == View::ScreenEdge;
   const bool autoHideChanged = presentation.autoHideAtEdge != autoHideAtEdge_;
   const bool flushChanged = presentation.flushWithEdge != flushWithEdge_;
+  const bool coverTaskbarChanged = presentation.coverTaskbar != coverTaskbar_;
   const bool edgeChanged = presentation.edge != edge_;
   const bool offsetChanged = presentation.offsetX != offsetX_ || presentation.offsetY != offsetY_;
   const bool monitorChanged = presentation.monitorId != monitorId_;
   const bool barLengthChanged = presentation.barLengthDip != barLengthDip_;
   const bool layoutChanged = viewChanged || monitorChanged || edgeChanged || offsetChanged ||
-                             flushChanged || barLengthChanged;
+                             flushChanged || coverTaskbarChanged || barLengthChanged;
   const bool orientationChanged = IsSideEdge(edge_) != IsSideEdge(presentation.edge);
-  const bool canAnimate = visible_ && !IsIconic(hwnd_) && !dragPointer_ &&
-                          !monitorChanged && Motion::Enabled();
 
   view_ = presentation.view;
   allDay_ = presentation.scope == classtime::PresentationSettings::Scope::AllDay;
@@ -1223,11 +1332,23 @@ void OverlayWindow::ApplyPresentation() {
   offsetX_ = presentation.offsetX;
   offsetY_ = presentation.offsetY;
   flushWithEdge_ = presentation.flushWithEdge;
+  hideInFullscreen_ = presentation.hideInFullscreen;
+  coverTaskbar_ = presentation.coverTaskbar;
   barLengthDip_ = presentation.barLengthDip;
   barBackgroundHex_ = presentation.barBackground;
   ApplyBarSurface();
 
   autoHideAtEdge_ = presentation.autoHideAtEdge;
+  UpdateFullscreenSuppression();
+  if (fullscreenSuppressed_) {
+    if (autoHideChanged) edgeCollapsed_ = view_ != View::ScreenEdge && autoHideAtEdge_;
+    UpdateVisibleLayer();
+    if (visible_) StartTimer();
+    return;
+  }
+
+  const bool canAnimate = visible_ && !IsIconic(hwnd_) && !dragPointer_ &&
+                          !monitorChanged && Motion::Enabled();
   if (view_ == View::ScreenEdge || wasScreenEdge) {
     if (viewChanged) {
       if (dragPointer_) FinishDrag(false);
@@ -1290,6 +1411,69 @@ void OverlayWindow::ApplyPresentation() {
   ApplyState();
 }
 
+RECT OverlayWindow::TargetBounds(const MONITORINFO& info) const {
+  return coverTaskbar_ ? info.rcMonitor : info.rcWork;
+}
+
+void OverlayWindow::UpdateFullscreenSuppression() {
+  const bool shouldSuppress =
+      visible_ && hideInFullscreen_ && !dragPointer_ && !dragging_ &&
+      DisplayUtils::IsMonitorInFullscreen(DisplayUtils::FindMonitor(monitorId_));
+  if (shouldSuppress == fullscreenSuppressed_) return;
+  fullscreenSuppressed_ = shouldSuppress;
+  if (fullscreenSuppressed_) {
+    HideDetail();
+    StopSnap();
+    if (edgeTimer_) edgeTimer_.Stop();
+    if (edgeMotion_ || edgeClosing_) ResetEdgeMotion();
+    FinishMorph();
+    HideScreenEdge();
+    if (hwnd_ != nullptr) ShowWindow(hwnd_, SW_HIDE);
+    return;
+  }
+  if (!visible_) return;
+  if (view_ == View::ScreenEdge) {
+    RefreshScreenEdge();
+  } else if (hwnd_ != nullptr) {
+    LayoutWindow();
+    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    EnsureTopmostAboveTaskbar();
+    ApplyState();
+    QueueEdgeCollapse();
+  }
+}
+
+void OverlayWindow::EnsureTopmostAboveTaskbar() {
+  if (!coverTaskbar_ || !visible_ || fullscreenSuppressed_) return;
+  if (view_ == View::ScreenEdge) {
+    for (const auto& strip : screenEdgeStrips_) {
+      if (strip.hwnd && IsTaskbarAboveWindow(strip.hwnd)) {
+        SetWindowPos(strip.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+      }
+    }
+    return;
+  }
+  if (hwnd_ && !dragPointer_ && !dragging_ && IsTaskbarAboveWindow(hwnd_)) {
+    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+  }
+}
+
+void CALLBACK OverlayWindow::OnForegroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG,
+                                                 DWORD, DWORD) {
+  try {
+    OverlayWindow* instance = activeInstance_;
+    if (instance == nullptr || !instance->visible_ || !instance->window_) return;
+    auto alive = instance->alive_;
+    instance->window_.DispatcherQueue().TryEnqueue([instance, alive] {
+      if (!*alive || !instance->visible_) return;
+      instance->UpdateFullscreenSuppression();
+      instance->EnsureTopmostAboveTaskbar();
+    });
+  } catch (...) {
+  }
+}
+
 void OverlayWindow::LayoutWindow() {
   const RECT target = ComputeLayoutRect();
   if (IsRectEmpty(&target)) return;
@@ -1300,10 +1484,10 @@ void OverlayWindow::LayoutWindow() {
 // 先计算目标矩形，等可见内容落位时再同步样式。
 RECT OverlayWindow::ComputeLayoutRect() {
   if (hwnd_ == nullptr || view_ == View::ScreenEdge) return {};
-  HMONITOR monitor = FindMonitor(monitorId_);
+  HMONITOR monitor = DisplayUtils::FindMonitor(monitorId_);
   MONITORINFO info{sizeof(info)};
   if (!GetMonitorInfoW(monitor, &info)) return {};
-  const RECT work = info.rcWork;
+  const RECT work = TargetBounds(info);
   if (MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) != monitor) {
     SetWindowPos(hwnd_, nullptr, work.left, work.top, 0, 0,
                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -1445,15 +1629,18 @@ void OverlayWindow::ShowOverlay() {
   if (hwnd_ == nullptr) return;
   visible_ = true;
   ApplyPresentation();
-  if (view_ == View::ScreenEdge) return;
+  StartTimer();
+  UpdateFullscreenSuppression();
+  if (fullscreenSuppressed_ || view_ == View::ScreenEdge) return;
   LayoutWindow();
   ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-  StartTimer();
+  EnsureTopmostAboveTaskbar();
   ApplyState();
 }
 
 void OverlayWindow::HideOverlay() {
   visible_ = false;
+  fullscreenSuppressed_ = false;
   HideDetail();
   if (dragPointer_) FinishDrag(false);
   StopSnap();
@@ -1468,6 +1655,12 @@ void OverlayWindow::HideOverlay() {
 }
 
 void OverlayWindow::Close() {
+  if (alive_) *alive_ = false;
+  if (activeInstance_ == this) activeInstance_ = nullptr;
+  if (foregroundHook_ != nullptr) {
+    UnhookWinEvent(foregroundHook_);
+    foregroundHook_ = nullptr;
+  }
   if (window_ != nullptr) {
     HideOverlay();
     window_.Close();
@@ -1478,20 +1671,27 @@ void OverlayWindow::Close() {
 
 void OverlayWindow::ApplyState() {
   if (window_ == nullptr || hwnd_ == nullptr || morphOutgoing_ != Layer::None) return;
-  // 复用可见浮窗原有的绘制刷新，显示器拔插或主屏变化后重新落到目标工作区。
+  if (visible_) {
+    UpdateFullscreenSuppression();
+    if (fullscreenSuppressed_) return;
+  }
+  // 复用可见浮窗原有的绘制刷新，显示器拔插或主屏变化后重新落到目标区域。
   // 拖动和位置动画期间不干预，提醒调度仍独立于此处。
   if (visible_ && view_ != View::ScreenEdge && !dragPointer_ && !dragging_ &&
       !snapFrame_.value && !windowMotionFrame_.value && !edgeMotion_ && !edgeClosing_) {
-    const HMONITOR target = FindMonitor(monitorId_);
+    const HMONITOR target = DisplayUtils::FindMonitor(monitorId_);
     MONITORINFO info{sizeof(info)};
     RECT bounds{};
     RECT intersection{};
-    if (target && GetMonitorInfoW(target, &info) && GetWindowRect(hwnd_, &bounds) &&
-        (MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) != target ||
-         !IntersectRect(&intersection, &bounds, &info.rcWork))) {
-      HideDetail();
-      LayoutWindow();
+    if (target && GetMonitorInfoW(target, &info) && GetWindowRect(hwnd_, &bounds)) {
+      const RECT area = TargetBounds(info);
+      if (MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) != target ||
+          !IntersectRect(&intersection, &bounds, &area)) {
+        HideDetail();
+        LayoutWindow();
+      }
     }
+    EnsureTopmostAboveTaskbar();
   }
   if (edgeCollapsed_ && view_ != View::ScreenEdge) {
     RefreshEdgeHandle();
@@ -1512,7 +1712,10 @@ void OverlayWindow::RefreshEdgeHandle() {
   const auto plan = Services::Instance().PlanFor(now);
   const auto snapshot = classtime::Evaluate(plan.segments, now);
   const double filled = snapshot.current ? kHandleTrackLengthDip * snapshot.progress : 0.0;
-  if (snapshot.current) edgeFillBrush_.Color(KindColor(CurrentPalette(), snapshot.current->kind));
+  if (snapshot.current) {
+    edgeFillBrush_.Color(KindColor(
+        ResolvePalette(Services::Instance().config().presentation), snapshot.current->kind));
+  }
   const bool side = IsSideEdge(edge_);
   edgeFill_.Width(side ? kHandleTrackThicknessDip : filled);
   edgeFill_.Height(side ? filled : kHandleTrackThicknessDip);
@@ -1522,14 +1725,18 @@ void OverlayWindow::RefreshEdgeHandle() {
 }
 
 void OverlayWindow::RefreshScreenEdge() {
-  // 复用可见浮窗的刷新节奏，重新读取工作区以适应分辨率或任务栏变化。
-  const HMONITOR monitor = FindMonitor(monitorId_);
+  if (fullscreenSuppressed_) {
+    HideScreenEdge();
+    return;
+  }
+  // 复用可见浮窗的刷新节奏，重新读取目标区域以适应分辨率或任务栏变化。
+  const HMONITOR monitor = DisplayUtils::FindMonitor(monitorId_);
   MONITORINFO info{sizeof(info)};
   if (!GetMonitorInfoW(monitor, &info)) {
     HideScreenEdge();
     return;
   }
-  const RECT& work = info.rcWork;
+  const RECT work = TargetBounds(info);
   const int width = work.right - work.left;
   const int height = work.bottom - work.top;
   if (std::min(width, height) < 3) {
@@ -1541,8 +1748,9 @@ void OverlayWindow::RefreshScreenEdge() {
                  SWP_NOZORDER | SWP_NOACTIVATE);
   }
   const auto& services = Services::Instance();
+  const auto& presentation = services.config().presentation;
   const int thickness = std::clamp<int>(
-      std::lround(services.config().presentation.screenEdgeThickness * GetDpiForWindow(hwnd_) / 96.0),
+      std::lround(presentation.screenEdgeThickness * GetDpiForWindow(hwnd_) / 96.0),
       1, std::min(width, height) / 3);
 
   // 左上角出发：上、右、下、左。每个像素只属于一个窗口，半透明转角不会重叠。
@@ -1558,7 +1766,7 @@ void OverlayWindow::RefreshScreenEdge() {
   const auto now = NowClock();
   const auto plan = services.PlanFor(now);
   const auto snapshot = classtime::Evaluate(plan.segments, now);
-  const auto palette = CurrentPalette();
+  const auto palette = ResolvePalette(presentation);
   auto accent = palette.accent;
   // 单色样式跟随当前状态；分色样式下各时段分别取色。
   if (snapshot.current) accent = KindColor(palette, snapshot.current->kind);
@@ -1583,7 +1791,7 @@ void OverlayWindow::RefreshScreenEdge() {
   const auto fill = PremultipliedBgra(accent);
   const auto track = PremultipliedBgra(Windows::UI::ColorHelper::FromArgb(172, 100, 117, 137));
   std::array<std::vector<uint32_t>, 4> timelines;
-  if (allDay_ && services.config().presentation.screenEdgeColors ==
+  if (allDay_ && presentation.screenEdgeColors ==
                      classtime::PresentationSettings::ScreenEdgeColors::Schedule) {
     const auto runs = BuildScreenEdgeRuns(plan.segments, now);
     if (!runs.empty()) {
@@ -1598,28 +1806,38 @@ void OverlayWindow::RefreshScreenEdge() {
         const auto color = WidgetAppearance::ScreenEdgeRunColor(palette, run.kind, run.elapsed);
         std::fill(timeline.begin() + begin, timeline.begin() + end, PremultipliedBgra(color));
       }
-      // 仅在颜色交界处采样渐变，转角两侧沿同一条时间线连续过渡。
-      const auto stops = WidgetAppearance::ScreenEdgeColorStops(runs, palette);
-      int sideStart = 0;
-      for (size_t side = 0; side < timelines.size(); ++side) {
-        auto& timeline = timelines[side];
-        for (size_t i = 1; i + 1 < stops.size(); i += 2) {
-          const int begin = std::clamp(static_cast<int>(std::floor(
-              stops[i].position * perimeter - sideStart)), 0, lengths[side]);
-          const int end = std::clamp(static_cast<int>(std::ceil(
-              stops[i + 1].position * perimeter - sideStart)), 0, lengths[side]);
-          for (int pixel = begin; pixel < end; ++pixel) {
-            const double position = (sideStart + pixel + 0.5) / perimeter;
-            timeline[pixel] = PremultipliedBgra(
-                WidgetAppearance::ScreenEdgeColorAt(stops, position));
+      if (presentation.screenEdgeGradient) {
+        // 仅在颜色交界处采样渐变，转角两侧沿同一条时间线连续过渡。
+        const auto stops = WidgetAppearance::ScreenEdgeColorStops(runs, palette);
+        int sideStart = 0;
+        for (size_t side = 0; side < timelines.size(); ++side) {
+          auto& timeline = timelines[side];
+          for (size_t i = 1; i + 1 < stops.size(); i += 2) {
+            const int begin = std::clamp(static_cast<int>(std::floor(
+                stops[i].position * perimeter - sideStart)), 0, lengths[side]);
+            const int end = std::clamp(static_cast<int>(std::ceil(
+                stops[i + 1].position * perimeter - sideStart)), 0, lengths[side]);
+            for (int pixel = begin; pixel < end; ++pixel) {
+              const double position = (sideStart + pixel + 0.5) / perimeter;
+              timeline[pixel] = PremultipliedBgra(
+                  WidgetAppearance::ScreenEdgeColorAt(stops, position));
+            }
           }
+          sideStart += lengths[side];
         }
-        sideStart += lengths[side];
       }
     }
   }
+  const bool showHighlight =
+      presentation.screenEdgeHighlight && !plan.segments.empty() &&
+      progress > 0.0001 && progress < 0.9999;
+  const bool animateHighlight = showHighlight && Motion::Enabled();
+  const double phase = animateHighlight ? CurrentHighlightPhase() : 0.65;
+  highlightPhase_ = phase;
+  const int highlightHead = showHighlight ? static_cast<int>(std::lround(progress * perimeter)) : -1;
   const int alpha = stripAlpha_;
   int remaining = static_cast<int>(std::lround(progress * perimeter));
+  int sideStart = 0;
   for (size_t i = 0; i < screenEdgeStrips_.size(); ++i) {
     auto& strip = screenEdgeStrips_[i];
     if (!strip.hwnd) {
@@ -1631,11 +1849,17 @@ void OverlayWindow::RefreshScreenEdge() {
     }
     const int pixels = std::clamp(remaining, 0, lengths[i]);
     remaining -= pixels;
+    const StripHighlight highlight{showHighlight, highlightHead, sideStart, perimeter, thickness,
+                                   phase};
+    sideStart += lengths[i];
     if (pixels == strip.filledPixels && fill == strip.fill && track == strip.track &&
-        timelines[i] == strip.timeline &&
+        timelines[i] == strip.timeline && strip.highlight == highlight &&
         alpha == strip.alpha && EqualRect(&bounds[i], &strip.bounds)) continue;
     if (!strip.hwnd || !RenderEdgeStrip(strip.hwnd, bounds[i], i % 2 == 0, i >= 2,
-                                        pixels, fill, track, timelines[i], alpha)) {
+                                        pixels, fill, track, timelines[i],
+                                        highlight.enabled, highlight.headPixel,
+                                        highlight.sideStart, highlight.perimeter,
+                                        highlight.thickness, highlight.phase, alpha)) {
       HideScreenEdge();
       return;
     }
@@ -1644,12 +1868,16 @@ void OverlayWindow::RefreshScreenEdge() {
     strip.fill = fill;
     strip.track = track;
     strip.timeline = std::move(timelines[i]);
+    strip.highlight = highlight;
     strip.alpha = alpha;
     if (!IsWindowVisible(strip.hwnd)) ShowWindow(strip.hwnd, SW_SHOWNOACTIVATE);
   }
+  UpdateHighlightTimer(animateHighlight);
+  EnsureTopmostAboveTaskbar();
 }
 
 void OverlayWindow::HideScreenEdge() {
+  UpdateHighlightTimer(false);
   stripAlpha_ = 255;
   for (auto& strip : screenEdgeStrips_) {
     if (strip.hwnd) DestroyWindow(strip.hwnd);
@@ -1662,9 +1890,70 @@ void OverlayWindow::RenderStrips(int alpha) {
     auto& strip = screenEdgeStrips_[i];
     if (!strip.hwnd || strip.filledPixels < 0 || alpha == strip.alpha) continue;
     if (RenderEdgeStrip(strip.hwnd, strip.bounds, i % 2 == 0, i >= 2, strip.filledPixels,
-                        strip.fill, strip.track, strip.timeline, alpha)) {
+                        strip.fill, strip.track, strip.timeline,
+                        strip.highlight.enabled, strip.highlight.headPixel,
+                        strip.highlight.sideStart, strip.highlight.perimeter,
+                        strip.highlight.thickness, strip.highlight.phase, alpha)) {
       strip.alpha = alpha;
     }
+  }
+}
+
+double OverlayWindow::CurrentHighlightPhase() {
+  constexpr double kCycleMs = 1800.0;
+  const auto now = std::chrono::steady_clock::now();
+  if (highlightEpoch_.time_since_epoch().count() == 0) highlightEpoch_ = now;
+  const double elapsedMs =
+      std::chrono::duration<double, std::milli>(now - highlightEpoch_).count();
+  return std::fmod(elapsedMs, kCycleMs) / kCycleMs;
+}
+
+void OverlayWindow::UpdateHighlightTimer(bool active) {
+  if (!active) {
+    if (highlightTimer_ != nullptr) highlightTimer_.Stop();
+    highlightEpoch_ = {};
+    return;
+  }
+  if (highlightTimer_ == nullptr && window_ != nullptr) {
+    highlightTimer_ = window_.DispatcherQueue().CreateTimer();
+    highlightTimer_.IsRepeating(true);
+    highlightTimer_.Interval(std::chrono::milliseconds(70));
+    highlightTimer_.Tick([this](auto const&, auto const&) { TickScreenEdgeHighlight(); });
+  }
+  if (highlightTimer_ != nullptr && !highlightTimer_.IsRunning()) {
+    highlightEpoch_ = std::chrono::steady_clock::now();
+    highlightTimer_.Start();
+  }
+}
+
+void OverlayWindow::TickScreenEdgeHighlight() {
+  if (!visible_ || fullscreenSuppressed_ || view_ != View::ScreenEdge || !Motion::Enabled()) {
+    UpdateHighlightTimer(false);
+    return;
+  }
+  if (windowMotionFrame_.value) return;
+  highlightPhase_ = CurrentHighlightPhase();
+  for (size_t i = 0; i < screenEdgeStrips_.size(); ++i) {
+    auto& strip = screenEdgeStrips_[i];
+    if (!strip.hwnd || !strip.highlight.enabled || strip.highlight.headPixel < 0 ||
+        strip.highlight.perimeter <= 0 || strip.highlight.thickness <= 0) continue;
+    const bool horizontal = i % 2 == 0;
+    const int length = horizontal ? (strip.bounds.right - strip.bounds.left)
+                                  : (strip.bounds.bottom - strip.bounds.top);
+    const auto spec = BuildScreenEdgeHighlightSpec(strip.highlight.perimeter,
+                                                   strip.highlight.thickness);
+    const double hlBegin = strip.highlight.headPixel - spec.tailLength;
+    const double hlEnd = strip.highlight.headPixel + spec.leadLength;
+    const double sideBegin = static_cast<double>(strip.highlight.sideStart);
+    const double sideEnd = sideBegin + length;
+    // 只重绘真正与流光/高光区间相交的边（通常仅 1 条），避免无谓重绘其余三边。
+    if (hlEnd <= sideBegin || hlBegin >= sideEnd) continue;
+    strip.highlight.phase = highlightPhase_;
+    RenderEdgeStrip(strip.hwnd, strip.bounds, horizontal, i >= 2, strip.filledPixels,
+                    strip.fill, strip.track, strip.timeline,
+                    strip.highlight.enabled, strip.highlight.headPixel,
+                    strip.highlight.sideStart, strip.highlight.perimeter,
+                    strip.highlight.thickness, strip.highlight.phase, strip.alpha);
   }
 }
 
@@ -1674,7 +1963,8 @@ void OverlayWindow::RefreshBar() {
   const auto plan = services.PlanFor(now);
   const auto state = BuildWidgetState(plan.segments, now, services.config().presentation.scope);
   const auto& snapshot = state.snapshot;
-  Palette palette = CurrentPalette();
+  const auto& presentation = services.config().presentation;
+  Palette palette = ResolvePalette(presentation);
   if (!barBackgroundHex_.empty()) {
     const auto background = WidgetAppearance::ParseHexColor(barBackgroundHex_);
     const bool dark = 299 * background.R + 587 * background.G + 114 * background.B < 128000;
@@ -1692,7 +1982,8 @@ void OverlayWindow::RefreshBar() {
   const auto& visible = state.visibleSegments;
   std::string signature = std::string(vertical ? "v:" : "h:") + std::to_string(clientWidth) +
                           ":" + std::to_string(clientHeight) + ":" + std::to_string(dpiScale_) +
-                          ":bg:" + barBackgroundHex_;
+                          ":bg:" + barBackgroundHex_ + ":fc:" + presentation.focusColor +
+                          ":rc:" + presentation.restColor + ":lc:" + presentation.lunchColor;
   for (const auto& segment : visible) {
     signature += ":" + segment.id + ":" + std::to_string(segment.DurationMinutes()) + ":" +
                  classtime::SegmentKindToString(segment.kind);
@@ -1853,7 +2144,8 @@ void OverlayWindow::RefreshRing() {
   const bool showProgress = snapshot.current && snapshot.progress > 0;
   if (showProgress) {
     const double sweep = snapshot.progress * 2.0 * 3.14159265358979323846;
-    ringAccent_.Color(KindColor(CurrentPalette(), snapshot.current->kind));
+    ringAccent_.Color(KindColor(
+        ResolvePalette(Services::Instance().config().presentation), snapshot.current->kind));
     ringSweep_.Point({static_cast<float>(kRingCenter + kRingRadius * std::sin(sweep)),
                       static_cast<float>(kRingCenter - kRingRadius * std::cos(sweep))});
     ringSweep_.IsLargeArc(snapshot.progress > 0.5);

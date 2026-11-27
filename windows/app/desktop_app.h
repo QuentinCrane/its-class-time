@@ -13,6 +13,7 @@
 #include "app/overlay_window.h"
 #include "app/settings_window.h"
 #include "app/tray_icon.h"
+#include "app/visual_alert.h"
 
 namespace ClassTimeApp {
 
@@ -50,6 +51,7 @@ struct DesktopApp
   std::unique_ptr<TrayIcon> tray_;
   std::unique_ptr<BoundaryMonitor> monitor_;
   std::unique_ptr<NotificationService> notifications_;
+  std::unique_ptr<VisualAlert> visualAlert_;
   winrt::Microsoft::UI::Dispatching::DispatcherQueue dispatcher_{nullptr};
   bool exiting_ = false;
 };

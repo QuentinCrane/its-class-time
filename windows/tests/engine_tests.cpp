@@ -364,10 +364,18 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   config.presentation.monitorId = "\\\\.\\DISPLAY2";
   config.presentation.autoHideAtEdge = true;
   config.presentation.flushWithEdge = false;
+  config.presentation.hideInFullscreen = true;
+  config.presentation.coverTaskbar = true;
   config.presentation.barLengthDip = 1040;
   config.presentation.barBackground = "2B4C7E";
   config.presentation.timelineSnapMinutes = 1;
   config.notifications.muted = true;
+  config.notifications.screenEdgeFlash = true;
+  config.notifications.dropClockAlert = true;
+  config.notifications.dropClockStyle =
+      classtime::NotificationSettings::AlertClockStyle::Mechanical3D;
+  config.notifications.dropClockPosition =
+      classtime::NotificationSettings::AlertClockPosition::TopRight;
   config.revision = 7;
 
   const auto now = Clock("2026-11-23T09:00:00");
@@ -386,6 +394,8 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   Check(parsed->presentation.monitorId == "\\\\.\\DISPLAY2", "配置保留选择的显示器");
   Check(parsed->presentation.autoHideAtEdge, "保留贴边自动隐藏");
   Check(!parsed->presentation.flushWithEdge, "保留悬浮间距设置");
+  Check(parsed->presentation.hideInFullscreen, "保留全屏自动隐藏设置");
+  Check(parsed->presentation.coverTaskbar, "保留允许覆盖任务栏设置");
   Check(parsed->presentation.barLengthDip == 1040, "保留自定义长条长度");
   Check(parsed->presentation.barBackground == "2B4C7E", "保留自定义长条背景色");
   Check(parsed->presentation.timelineSnapMinutes == 1, "保留时间轴步进");
@@ -395,11 +405,21 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   Check(leftConfig && leftConfig->presentation.edge == classtime::PresentationSettings::Edge::Left,
         "保留左侧贴边");
   Check(parsed->notifications.muted, "保留暂停状态");
+  Check(parsed->notifications.screenEdgeFlash, "保留全屏边缘闪光提醒开关");
+  Check(parsed->notifications.dropClockAlert, "保留掉落 3D 时钟提醒开关");
+  Check(parsed->notifications.dropClockStyle ==
+            classtime::NotificationSettings::AlertClockStyle::Mechanical3D,
+        "保留 3D 机械表盘样式");
+  Check(parsed->notifications.dropClockPosition ==
+            classtime::NotificationSettings::AlertClockPosition::TopRight,
+        "保留掉落 3D 时钟位置");
   Check(parsed->revision == 7, "保留修订号");
 
   config.presentation.view = classtime::PresentationSettings::View::ScreenEdge;
   config.presentation.screenEdgeThickness = 17;
   config.presentation.screenEdgeColors = classtime::PresentationSettings::ScreenEdgeColors::CurrentState;
+  config.presentation.screenEdgeGradient = false;
+  config.presentation.screenEdgeHighlight = false;
   const auto edgeConfig = classtime::ParseConfig(classtime::SerializeConfig(config), &error);
   Check(edgeConfig && edgeConfig->presentation.view == classtime::PresentationSettings::View::ScreenEdge,
         "保留屏幕边框视图");
@@ -407,6 +427,8 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   Check(edgeConfig && edgeConfig->presentation.screenEdgeColors ==
                           classtime::PresentationSettings::ScreenEdgeColors::CurrentState,
         "保留屏幕边框的跟随当前时段配色");
+  Check(edgeConfig && !edgeConfig->presentation.screenEdgeGradient, "保留屏幕边框非渐变设置");
+  Check(edgeConfig && !edgeConfig->presentation.screenEdgeHighlight, "保留屏幕边框关闭高光设置");
   const auto withTemplate = "{\"templates\":[" + classtime::SerializeSchedule(highSchool, 0) +
                             "],\"presentation\":";
   const auto legacy = classtime::ParseConfig(withTemplate + R"({"view":"screen_edge"}})", &error);
@@ -414,6 +436,10 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   Check(legacy && legacy->presentation.screenEdgeColors ==
                        classtime::PresentationSettings::ScreenEdgeColors::Schedule,
         "旧配置默认使用按时段分色");
+  Check(legacy && !legacy->presentation.hideInFullscreen, "旧配置默认不启用全屏自动隐藏");
+  Check(legacy && !legacy->presentation.coverTaskbar, "旧配置默认不覆盖任务栏");
+  Check(legacy && legacy->presentation.screenEdgeGradient, "旧配置默认开启边框颜色渐变");
+  Check(legacy && legacy->presentation.screenEdgeHighlight, "旧配置默认开启边框进度高光");
   const auto unknownColors =
       classtime::ParseConfig(withTemplate + R"({"screenEdgeColors":"unknown"}})", &error);
   Check(unknownColors && unknownColors->presentation.screenEdgeColors ==
@@ -450,6 +476,84 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   const auto invalidSnap =
       classtime::ParseConfig(withTemplate + R"({"timelineSnapMinutes":2}})", &error);
   Check(invalidSnap && invalidSnap->presentation.timelineSnapMinutes == 5, "非法步进回退默认值");
+  Check(legacy && !legacy->notifications.screenEdgeFlash && !legacy->notifications.dropClockAlert &&
+            legacy->notifications.dropClockStyle ==
+                classtime::NotificationSettings::AlertClockStyle::Digital3D &&
+            legacy->notifications.dropClockPosition ==
+                classtime::NotificationSettings::AlertClockPosition::TopCenter,
+        "旧配置默认关闭视觉到点动效并使用 3D 数字顶部居中");
+  const auto invalidVisualNotify = classtime::ParseConfig(
+      "{\"templates\":[" + classtime::SerializeSchedule(highSchool, 0) +
+          "],\"notifications\":{\"dropClockStyle\":\"unknown\",\"dropClockPosition\":\"bottom\"}}",
+      &error);
+  Check(invalidVisualNotify &&
+            invalidVisualNotify->notifications.dropClockStyle ==
+                classtime::NotificationSettings::AlertClockStyle::Digital3D &&
+            invalidVisualNotify->notifications.dropClockPosition ==
+                classtime::NotificationSettings::AlertClockPosition::TopCenter &&
+            invalidVisualNotify->notifications.dropClockSkin ==
+                classtime::NotificationSettings::AlertClockSkin::Graphite,
+        "未知 3D 时钟样式、皮肤或掉落位置回退默认值");
+  Check(legacy && legacy->presentation.focusColor.empty() && legacy->presentation.restColor.empty() &&
+            legacy->presentation.lunchColor.empty() &&
+            legacy->notifications.screenEdgeFlashColor.empty() &&
+            legacy->notifications.dropClockBodyColor.empty() &&
+            legacy->notifications.dropClockFaceColor.empty() &&
+            legacy->notifications.dropClockTextColor.empty() &&
+            legacy->notifications.dropClockAccentColor.empty() &&
+            legacy->notifications.dropClockSkin ==
+                classtime::NotificationSettings::AlertClockSkin::Graphite,
+        "旧配置默认全部自定义阶段色与视觉提醒颜色为空且皮肤为深邃金属");
+
+  classtime::AppConfig colorConfig = config;
+  colorConfig.presentation.focusColor = "1E6BFF";
+  colorConfig.presentation.restColor = "22AA88";
+  colorConfig.presentation.lunchColor = "F59E0B";
+  colorConfig.notifications.dropClockSkin =
+      classtime::NotificationSettings::AlertClockSkin::VintageGold;
+  colorConfig.notifications.screenEdgeFlashColor = "FF5533";
+  colorConfig.notifications.dropClockBodyColor = "231B14";
+  colorConfig.notifications.dropClockFaceColor = "F3E7CC";
+  colorConfig.notifications.dropClockTextColor = "2B2016";
+  colorConfig.notifications.dropClockAccentColor = "00C2A8";
+  const auto colorParsed = classtime::ParseConfig(classtime::SerializeConfig(colorConfig), &error);
+  Check(colorParsed && colorParsed->presentation.focusColor == "1E6BFF" &&
+            colorParsed->presentation.restColor == "22AA88" &&
+            colorParsed->presentation.lunchColor == "F59E0B" &&
+            colorParsed->notifications.dropClockSkin ==
+                classtime::NotificationSettings::AlertClockSkin::VintageGold &&
+            colorParsed->notifications.screenEdgeFlashColor == "FF5533" &&
+            colorParsed->notifications.dropClockBodyColor == "231B14" &&
+            colorParsed->notifications.dropClockFaceColor == "F3E7CC" &&
+            colorParsed->notifications.dropClockTextColor == "2B2016" &&
+            colorParsed->notifications.dropClockAccentColor == "00C2A8",
+        "阶段配色、3D 时钟皮肤与自定义颜色往返读写保持一致");
+
+  using Skin = classtime::NotificationSettings::AlertClockSkin;
+  for (const auto skin : {Skin::Graphite, Skin::Ivory, Skin::VintageGold,
+                          Skin::CyberNeon, Skin::RetroMatrix, Skin::OceanBlue}) {
+    classtime::AppConfig skinCfg = config;
+    skinCfg.notifications.dropClockSkin = skin;
+    const auto parsedSkin = classtime::ParseConfig(classtime::SerializeConfig(skinCfg), &error);
+    Check(parsedSkin && parsedSkin->notifications.dropClockSkin == skin,
+          "3D 时钟皮肤枚举往返序列化一致");
+  }
+
+  const auto badColors = classtime::ParseConfig(
+      "{\"templates\":[" + classtime::SerializeSchedule(highSchool, 0) +
+          "],\"presentation\":{\"focusColor\":\"#112233\",\"restColor\":\"GGGGGG\",\"lunchColor\":\"12345\"},"
+          "\"notifications\":{\"dropClockSkin\":\"unknown_skin\",\"screenEdgeFlashColor\":\"bad\",\"dropClockBodyColor\":\"1234567\",\"dropClockFaceColor\":\"xyz\",\"dropClockTextColor\":\"123\",\"dropClockAccentColor\":\"\"}}",
+      &error);
+  Check(badColors && badColors->presentation.focusColor.empty() &&
+            badColors->presentation.restColor.empty() && badColors->presentation.lunchColor.empty() &&
+            badColors->notifications.dropClockSkin ==
+                classtime::NotificationSettings::AlertClockSkin::Graphite &&
+            badColors->notifications.screenEdgeFlashColor.empty() &&
+            badColors->notifications.dropClockBodyColor.empty() &&
+            badColors->notifications.dropClockFaceColor.empty() &&
+            badColors->notifications.dropClockTextColor.empty() &&
+            badColors->notifications.dropClockAccentColor.empty(),
+        "非法阶段色、未知皮肤或提醒颜色静默回退为空/默认，不阻断配置读取");
 
   bool fromOverride = false;
   const auto effective = classtime::EffectiveSegments(*parsed, now, &fromOverride);
@@ -680,6 +784,33 @@ void TestScreenEdgeTimeline(const classtime::Schedule& highSchool) {
             NearlyEqual(projected[1].end, 60, 1e-8) && projected[2].side == 2 &&
             NearlyEqual(projected[2].begin, 0, 1e-8) && NearlyEqual(projected[2].end, 20, 1e-8),
         "跨越边角的时段沿四边顺时针保持正确比例");
+
+  // 屏幕边框进度前沿高光：0% / 100% 不显示；流光扫向当前点、前沿脉冲闪烁且保持色带连贯。
+  const double perimeter = 6000.0;
+  const double thickness = 10.0;
+  const auto atZero = SampleScreenEdgeHighlight(0.0, 0.0, perimeter, thickness, 0.65);
+  const auto atFull = SampleScreenEdgeHighlight(perimeter, perimeter, perimeter, thickness, 0.65);
+  Check(atZero.boost == 0.0 && atZero.core == 0.0 && atZero.lip == 0.0 &&
+            atFull.boost == 0.0 && atFull.core == 0.0 && atFull.lip == 0.0,
+        "进度为 0 或 100% 时不叠加边框高光");
+  const double head = 1500.0;
+  const auto spec = BuildScreenEdgeHighlightSpec(perimeter, thickness);
+  const auto peakHead = SampleScreenEdgeHighlight(head, head, perimeter, thickness, 0.65);
+  const auto dimHead = SampleScreenEdgeHighlight(head, head, perimeter, thickness, 0.15);
+  const auto behindCore = SampleScreenEdgeHighlight(head - spec.headSpan * 0.5, head, perimeter, thickness, 0.65);
+  const auto behindEnd = SampleScreenEdgeHighlight(head - spec.tailLength - 1.0, head, perimeter, thickness, 0.65);
+  const auto aheadLip = SampleScreenEdgeHighlight(head + spec.leadLength * 0.4, head, perimeter, thickness, 0.65);
+  const auto aheadEnd = SampleScreenEdgeHighlight(head + spec.leadLength + 1.0, head, perimeter, thickness, 0.65);
+  const auto shimmerWave = SampleScreenEdgeHighlight(head - spec.tailLength * 0.5, head, perimeter, thickness, 0.36);
+  Check(peakHead.core > 0.9 && peakHead.boost > 0.8 && behindCore.core > 0.2 &&
+            behindCore.core < peakHead.core && behindEnd.core == 0.0 && behindEnd.boost == 0.0,
+        "边框高光峰值在前沿达到最高并在尾端以外归零");
+  Check(peakHead.core > dimHead.core + 0.5,
+        "边框前沿高光随闪烁周期在明暗之间明显脉冲");
+  Check(shimmerWave.core > 0.6 && shimmerWave.boost > 0.5,
+        "边框流光在已过尾段向当前进度点推进时形成明显波峰");
+  Check(aheadLip.lip > 0.1 && aheadLip.core == 0.0 && aheadEnd.lip == 0.0,
+        "边框前沿未到侧提供窄对比边且不溢出界外");
 }
 
 }  // namespace

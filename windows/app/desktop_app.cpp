@@ -91,6 +91,7 @@ void DesktopApp::Initialize() {
   });
 
   overlay_ = std::make_unique<OverlayWindow>();
+  visualAlert_ = std::make_unique<VisualAlert>(dispatcher_);
   // 设置窗口懒加载：首次打开设置时才创建，避免启动期多个未激活窗口互相干扰。
 
   tray_ = std::make_unique<TrayIcon>();
@@ -110,6 +111,11 @@ void DesktopApp::Initialize() {
     dispatcher.TryEnqueue([this, batch] {
       if (exiting_) return;
       if (notifications_) notifications_->ShowBoundary(batch.events, batch.plan);
+      if (visualAlert_) {
+        if (const auto alert = ComposeBoundaryAlert(batch.events)) {
+          visualAlert_->Trigger(*alert);
+        }
+      }
       ApplyState();
     });
   });
@@ -146,7 +152,11 @@ void DesktopApp::ApplyState(bool presentationOnly) {
 }
 
 void DesktopApp::ShowSettings() {
-  if (!settings_) settings_ = std::make_unique<SettingsWindow>([this] { ExitApplication(); });
+  if (!settings_) {
+    settings_ = std::make_unique<SettingsWindow>(
+        [this] { ExitApplication(); },
+        [this] { return visualAlert_ && visualAlert_->TriggerPreview(); });
+  }
   settings_->Show();
 }
 
@@ -214,6 +224,10 @@ void DesktopApp::ExitApplication() {
   if (notifications_) {
     notifications_->Unregister();
     notifications_.reset();
+  }
+  if (visualAlert_) {
+    visualAlert_->StopAll();
+    visualAlert_.reset();
   }
   Services::Instance().Save();
   settings_.reset();

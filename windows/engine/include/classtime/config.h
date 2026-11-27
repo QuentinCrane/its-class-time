@@ -33,14 +33,26 @@ struct PresentationSettings {
   bool autoHideAtEdge = false;
   // 贴边时是否与任务栏/屏幕边缘无缝衔接（0 间距），否则保留悬浮间距。
   bool flushWithEdge = true;
+  // 目标显示器存在全屏应用时临时隐藏桌面组件，不影响后台提醒。
+  bool hideInFullscreen = false;
+  // 是否允许组件覆盖在任务栏上方（使用完整显示器区域而非工作区）。
+  bool coverTaskbar = false;
   int screenEdgeThickness = kDefaultScreenEdgeThickness;  // DIP
   ScreenEdgeColors screenEdgeColors = ScreenEdgeColors::Schedule;
+  // 全天按时段分色边框是否在颜色交界处启用平滑渐变；关闭则清晰分段。
+  bool screenEdgeGradient = true;
+  // 屏幕边框是否在当前进度位置叠加前沿高光，便于分辨进度位置。
+  bool screenEdgeHighlight = true;
   // 分节长条沿贴边方向的整体长度（DIP）；顶部/底部控制宽度，左右控制竖向高度。
   // 圆环与屏幕边框不受影响。
   int barLengthDip = kDefaultBarLength;
   int timelineSnapMinutes = 5;
   // 长条背景色，"RRGGBB" 十六进制字符串；空表示跟随系统背景色。
   std::string barBackground;
+  // 各时段自定义颜色，"RRGGBB" 十六进制字符串；空表示使用默认色（上课跟随系统强调色，课间 #3FA796，午休 #E0A458）。
+  std::string focusColor;
+  std::string restColor;
+  std::string lunchColor;
   std::string monitorId;  // 显示器设备名；空表示主屏
   int offsetX = 0;        // 相对工作区水平居中位置的 DIP 偏移
   int offsetY = 12;       // 距离工作区边缘的 DIP
@@ -53,11 +65,27 @@ struct PresentationSettings {
 };
 
 struct NotificationSettings {
+  enum class AlertClockStyle { Digital3D, Mechanical3D };
+  enum class AlertClockPosition { TopCenter, TopRight, TopLeft };
+  enum class AlertClockSkin { Graphite, Ivory, VintageGold, CyberNeon, RetroMatrix, OceanBlue };
+
   bool enabled = true;
   bool muted = false;
   bool focusBoundaries = true;
   bool restBoundaries = true;
   bool lunchBoundaries = true;
+  // 系统通知之外的可选视觉到点动效（不替代或绕过系统通知权限）。
+  bool screenEdgeFlash = false;
+  bool dropClockAlert = false;
+  AlertClockStyle dropClockStyle = AlertClockStyle::Digital3D;
+  AlertClockPosition dropClockPosition = AlertClockPosition::TopCenter;
+  AlertClockSkin dropClockSkin = AlertClockSkin::Graphite;
+  // 视觉到点动效自定义颜色，"RRGGBB" 十六进制字符串；空表示跟随所选皮肤或当前时段。
+  std::string screenEdgeFlashColor;
+  std::string dropClockBodyColor;
+  std::string dropClockFaceColor;
+  std::string dropClockTextColor;
+  std::string dropClockAccentColor;
 };
 
 struct DailyOverride {

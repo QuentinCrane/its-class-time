@@ -8,7 +8,7 @@ using namespace winrt::Microsoft::Windows::AppNotifications::Builder;
 namespace ClassTimeApp {
 namespace {
 
-struct Message {
+struct LegacyMessageUnused {
   std::wstring title;
   std::wstring body;
 };
@@ -72,7 +72,7 @@ std::wstring RestText(const classtime::SegmentRef& segment) {
 }
 
 // 同一秒发生“下课 + 课间开始”时只发一条，避免刷屏。
-std::optional<Message> Compose(const std::vector<classtime::BoundaryEvent>& rawEvents) {
+std::optional<BoundaryAlert> Compose(const std::vector<classtime::BoundaryEvent>& rawEvents) {
   std::vector<classtime::BoundaryEvent> events;
   for (const auto& event : rawEvents) {
     if (Allowed(event.kind)) events.push_back(event);
@@ -91,15 +91,20 @@ std::optional<Message> Compose(const std::vector<classtime::BoundaryEvent>& rawE
     }
   }
 
-  Message message;
+  BoundaryAlert message;
   if (start != nullptr) {
     const auto& segment = start->segment;
+    message.clockTime = segment.start;
+    message.accentKind = segment.kind;
+    message.rangeText = RangeText(segment);
     switch (start->kind) {
       case classtime::BoundaryKind::FocusStart:
+        message.stageBadge = OrdinalText(segment);
         message.title = L"开始啦";
         message.body = OrdinalText(segment) + L"开始了（" + RangeText(segment) + L"）";
         break;
       case classtime::BoundaryKind::LunchStart:
+        message.stageBadge = L"午休时间";
         message.title = focusEnd != nullptr ? L"下课了" : L"午休时间";
         message.body = focusEnd != nullptr
                            ? OrdinalText(focusEnd->segment) + L"结束，" + RestText(segment)
@@ -107,6 +112,8 @@ std::optional<Message> Compose(const std::vector<classtime::BoundaryEvent>& rawE
         break;
       case classtime::BoundaryKind::BreakStart:
       case classtime::BoundaryKind::LongBreakStart:
+        message.stageBadge = segment.kind == classtime::SegmentKind::LongBreak
+                                 ? L"长休息" : L"课间休息";
         message.title = focusEnd != nullptr ? L"下课了" : L"休息一下";
         message.body = focusEnd != nullptr
                            ? OrdinalText(focusEnd->segment) + L"结束，" + RestText(segment)
@@ -119,21 +126,31 @@ std::optional<Message> Compose(const std::vector<classtime::BoundaryEvent>& rawE
   }
 
   if (focusEnd != nullptr) {
+    message.clockTime = focusEnd->segment.end;
+    message.accentKind = focusEnd->segment.kind;
+    message.stageBadge = OrdinalText(focusEnd->segment) + L"结束";
+    message.rangeText = RangeText(focusEnd->segment);
     message.title = L"下课了";
     message.body = OrdinalText(focusEnd->segment) + L"结束，记得活动一下";
     return message;
   }
   if (end != nullptr) {
+    message.clockTime = end->segment.end;
+    message.accentKind = end->segment.kind;
+    message.rangeText = RangeText(end->segment);
     switch (end->kind) {
       case classtime::BoundaryKind::LunchEnd:
+        message.stageBadge = L"午休结束";
         message.title = L"午休结束";
         message.body = L"接下来准备进入下午的安排";
         break;
       case classtime::BoundaryKind::LongBreakEnd:
+        message.stageBadge = L"休息结束";
         message.title = L"休息结束";
         message.body = L"准备好下一段安排";
         break;
       case classtime::BoundaryKind::BreakEnd:
+        message.stageBadge = L"课间结束";
         message.title = L"继续加油";
         message.body = L"课间结束，准备好下一节";
         break;
@@ -146,6 +163,11 @@ std::optional<Message> Compose(const std::vector<classtime::BoundaryEvent>& rawE
 }
 
 }  // namespace
+
+std::optional<BoundaryAlert> ComposeBoundaryAlert(
+    const std::vector<classtime::BoundaryEvent>& events) {
+  return Compose(events);
+}
 
 void NotificationService::Register(std::function<void()> onActivated) {
   try {

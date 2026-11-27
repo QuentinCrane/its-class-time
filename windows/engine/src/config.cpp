@@ -105,6 +105,50 @@ PresentationSettings::Edge EdgeFromString(const std::string& text) {
   return PresentationSettings::Edge::Bottom;
 }
 
+const char* AlertClockStyleToString(NotificationSettings::AlertClockStyle style) {
+  return style == NotificationSettings::AlertClockStyle::Mechanical3D ? "mechanical_3d"
+                                                                       : "digital_3d";
+}
+
+NotificationSettings::AlertClockStyle AlertClockStyleFromString(const std::string& text) {
+  return text == "mechanical_3d" ? NotificationSettings::AlertClockStyle::Mechanical3D
+                                 : NotificationSettings::AlertClockStyle::Digital3D;
+}
+
+const char* AlertClockPositionToString(NotificationSettings::AlertClockPosition position) {
+  switch (position) {
+    case NotificationSettings::AlertClockPosition::TopRight: return "top_right";
+    case NotificationSettings::AlertClockPosition::TopLeft: return "top_left";
+    default: return "top_center";
+  }
+}
+
+NotificationSettings::AlertClockPosition AlertClockPositionFromString(const std::string& text) {
+  if (text == "top_right") return NotificationSettings::AlertClockPosition::TopRight;
+  if (text == "top_left") return NotificationSettings::AlertClockPosition::TopLeft;
+  return NotificationSettings::AlertClockPosition::TopCenter;
+}
+
+const char* AlertClockSkinToString(NotificationSettings::AlertClockSkin skin) {
+  switch (skin) {
+    case NotificationSettings::AlertClockSkin::Ivory: return "ivory";
+    case NotificationSettings::AlertClockSkin::VintageGold: return "vintage_gold";
+    case NotificationSettings::AlertClockSkin::CyberNeon: return "cyber_neon";
+    case NotificationSettings::AlertClockSkin::RetroMatrix: return "retro_matrix";
+    case NotificationSettings::AlertClockSkin::OceanBlue: return "ocean_blue";
+    default: return "graphite";
+  }
+}
+
+NotificationSettings::AlertClockSkin AlertClockSkinFromString(const std::string& text) {
+  if (text == "ivory") return NotificationSettings::AlertClockSkin::Ivory;
+  if (text == "vintage_gold") return NotificationSettings::AlertClockSkin::VintageGold;
+  if (text == "cyber_neon") return NotificationSettings::AlertClockSkin::CyberNeon;
+  if (text == "retro_matrix") return NotificationSettings::AlertClockSkin::RetroMatrix;
+  if (text == "ocean_blue") return NotificationSettings::AlertClockSkin::OceanBlue;
+  return NotificationSettings::AlertClockSkin::Graphite;
+}
+
 // "RRGGBB"（大小写均可）；无效或空字符串都视为“跟随系统”。
 bool IsValidHexColor(const std::string& text) {
   if (text.size() != 6) return false;
@@ -250,6 +294,12 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
     if (const json::Value* flush = presentation->Find("flushWithEdge")) {
       config.presentation.flushWithEdge = flush->AsBool(true);
     }
+    if (const json::Value* hideFullscreen = presentation->Find("hideInFullscreen")) {
+      config.presentation.hideInFullscreen = hideFullscreen->AsBool(false);
+    }
+    if (const json::Value* coverTaskbar = presentation->Find("coverTaskbar")) {
+      config.presentation.coverTaskbar = coverTaskbar->AsBool(false);
+    }
     if (const auto* thickness = presentation->Find("screenEdgeThickness")) {
       config.presentation.screenEdgeThickness = std::clamp(
           thickness->AsInt(PresentationSettings::kDefaultScreenEdgeThickness),
@@ -260,6 +310,12 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
       config.presentation.screenEdgeColors = colors->AsString() == "current_state"
           ? PresentationSettings::ScreenEdgeColors::CurrentState
           : PresentationSettings::ScreenEdgeColors::Schedule;
+    }
+    if (const auto* gradient = presentation->Find("screenEdgeGradient")) {
+      config.presentation.screenEdgeGradient = gradient->AsBool(true);
+    }
+    if (const auto* highlight = presentation->Find("screenEdgeHighlight")) {
+      config.presentation.screenEdgeHighlight = highlight->AsBool(true);
     }
     if (const auto* barLength = presentation->Find("barLengthDip")) {
       const int value = barLength->AsInt(PresentationSettings::kDefaultBarLength);
@@ -275,6 +331,18 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
       const auto value = background->AsString();
       // 只接受合法的 RRGGBB；无效值按“跟随系统”处理，不让整份配置失败。
       if (IsValidHexColor(value)) config.presentation.barBackground = value;
+    }
+    if (const auto* focus = presentation->Find("focusColor")) {
+      const auto value = focus->AsString();
+      if (IsValidHexColor(value)) config.presentation.focusColor = value;
+    }
+    if (const auto* rest = presentation->Find("restColor")) {
+      const auto value = rest->AsString();
+      if (IsValidHexColor(value)) config.presentation.restColor = value;
+    }
+    if (const auto* lunch = presentation->Find("lunchColor")) {
+      const auto value = lunch->AsString();
+      if (IsValidHexColor(value)) config.presentation.lunchColor = value;
     }
     if (const json::Value* monitor = presentation->Find("monitorId")) {
       config.presentation.monitorId = monitor->AsString();
@@ -302,6 +370,41 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
     }
     if (const json::Value* value = notifications->Find("lunchBoundaries")) {
       config.notifications.lunchBoundaries = value->AsBool(true);
+    }
+    if (const json::Value* value = notifications->Find("screenEdgeFlash")) {
+      config.notifications.screenEdgeFlash = value->AsBool(false);
+    }
+    if (const json::Value* value = notifications->Find("dropClockAlert")) {
+      config.notifications.dropClockAlert = value->AsBool(false);
+    }
+    if (const json::Value* value = notifications->Find("dropClockStyle")) {
+      config.notifications.dropClockStyle = AlertClockStyleFromString(value->AsString());
+    }
+    if (const json::Value* value = notifications->Find("dropClockPosition")) {
+      config.notifications.dropClockPosition = AlertClockPositionFromString(value->AsString());
+    }
+    if (const json::Value* value = notifications->Find("dropClockSkin")) {
+      config.notifications.dropClockSkin = AlertClockSkinFromString(value->AsString());
+    }
+    if (const json::Value* value = notifications->Find("screenEdgeFlashColor")) {
+      const auto hex = value->AsString();
+      if (IsValidHexColor(hex)) config.notifications.screenEdgeFlashColor = hex;
+    }
+    if (const json::Value* value = notifications->Find("dropClockBodyColor")) {
+      const auto hex = value->AsString();
+      if (IsValidHexColor(hex)) config.notifications.dropClockBodyColor = hex;
+    }
+    if (const json::Value* value = notifications->Find("dropClockFaceColor")) {
+      const auto hex = value->AsString();
+      if (IsValidHexColor(hex)) config.notifications.dropClockFaceColor = hex;
+    }
+    if (const json::Value* value = notifications->Find("dropClockTextColor")) {
+      const auto hex = value->AsString();
+      if (IsValidHexColor(hex)) config.notifications.dropClockTextColor = hex;
+    }
+    if (const json::Value* value = notifications->Find("dropClockAccentColor")) {
+      const auto hex = value->AsString();
+      if (IsValidHexColor(hex)) config.notifications.dropClockAccentColor = hex;
     }
   }
 
@@ -347,13 +450,20 @@ std::string SerializeConfig(const AppConfig& config) {
   presentation.Set("visible", json::Value::MakeBool(config.presentation.visible));
   presentation.Set("autoHideAtEdge", json::Value::MakeBool(config.presentation.autoHideAtEdge));
   presentation.Set("flushWithEdge", json::Value::MakeBool(config.presentation.flushWithEdge));
+  presentation.Set("hideInFullscreen", json::Value::MakeBool(config.presentation.hideInFullscreen));
+  presentation.Set("coverTaskbar", json::Value::MakeBool(config.presentation.coverTaskbar));
   presentation.Set("screenEdgeThickness", json::Value::MakeNumber(config.presentation.screenEdgeThickness));
   presentation.Set("screenEdgeColors", json::Value::MakeString(
       config.presentation.screenEdgeColors == PresentationSettings::ScreenEdgeColors::CurrentState
           ? "current_state" : "schedule"));
+  presentation.Set("screenEdgeGradient", json::Value::MakeBool(config.presentation.screenEdgeGradient));
+  presentation.Set("screenEdgeHighlight", json::Value::MakeBool(config.presentation.screenEdgeHighlight));
   presentation.Set("barLengthDip", json::Value::MakeNumber(config.presentation.barLengthDip));
   presentation.Set("timelineSnapMinutes", json::Value::MakeNumber(config.presentation.timelineSnapMinutes));
   presentation.Set("barBackground", json::Value::MakeString(config.presentation.barBackground));
+  presentation.Set("focusColor", json::Value::MakeString(config.presentation.focusColor));
+  presentation.Set("restColor", json::Value::MakeString(config.presentation.restColor));
+  presentation.Set("lunchColor", json::Value::MakeString(config.presentation.lunchColor));
   presentation.Set("monitorId", json::Value::MakeString(config.presentation.monitorId));
   presentation.Set("offsetX", json::Value::MakeNumber(config.presentation.offsetX));
   presentation.Set("offsetY", json::Value::MakeNumber(config.presentation.offsetY));
@@ -365,6 +475,24 @@ std::string SerializeConfig(const AppConfig& config) {
   notifications.Set("focusBoundaries", json::Value::MakeBool(config.notifications.focusBoundaries));
   notifications.Set("restBoundaries", json::Value::MakeBool(config.notifications.restBoundaries));
   notifications.Set("lunchBoundaries", json::Value::MakeBool(config.notifications.lunchBoundaries));
+  notifications.Set("screenEdgeFlash", json::Value::MakeBool(config.notifications.screenEdgeFlash));
+  notifications.Set("dropClockAlert", json::Value::MakeBool(config.notifications.dropClockAlert));
+  notifications.Set("dropClockStyle", json::Value::MakeString(
+      AlertClockStyleToString(config.notifications.dropClockStyle)));
+  notifications.Set("dropClockPosition", json::Value::MakeString(
+      AlertClockPositionToString(config.notifications.dropClockPosition)));
+  notifications.Set("dropClockSkin", json::Value::MakeString(
+      AlertClockSkinToString(config.notifications.dropClockSkin)));
+  notifications.Set("screenEdgeFlashColor",
+                    json::Value::MakeString(config.notifications.screenEdgeFlashColor));
+  notifications.Set("dropClockBodyColor",
+                    json::Value::MakeString(config.notifications.dropClockBodyColor));
+  notifications.Set("dropClockFaceColor",
+                    json::Value::MakeString(config.notifications.dropClockFaceColor));
+  notifications.Set("dropClockTextColor",
+                    json::Value::MakeString(config.notifications.dropClockTextColor));
+  notifications.Set("dropClockAccentColor",
+                    json::Value::MakeString(config.notifications.dropClockAccentColor));
   root.Set("notifications", std::move(notifications));
 
   root.Set("launchAtLogin", json::Value::MakeBool(config.launchAtLogin));

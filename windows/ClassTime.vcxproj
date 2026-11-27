@@ -83,7 +83,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>dwmapi.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dwmapi.lib;gdi32.lib;d2d1.lib;dwrite.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableDpiAwareness>true</EnableDpiAwareness>
@@ -120,6 +120,7 @@
     <ClInclude Include="pch.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="app\desktop_app.h" />
+    <ClInclude Include="app\display_utils.h" />
     <ClInclude Include="app\settings_window.h" />
     <ClInclude Include="app\boundary_monitor.h" />
     <ClInclude Include="app\notification_service.h" />
@@ -128,6 +129,7 @@
     <ClInclude Include="app\template_ops.h" />
     <ClInclude Include="app\tray_icon.h" />
     <ClInclude Include="app\ui_motion.h" />
+    <ClInclude Include="app\visual_alert.h" />
     <ClInclude Include="app\widget_appearance.h" />
     <ClInclude Include="app\timeline_edit.h" />
     <ClInclude Include="app\widget_state.h" />
@@ -150,6 +152,7 @@
     <ClCompile Include="app\overlay_window.cpp" />
     <ClCompile Include="app\services.cpp" />
     <ClCompile Include="app\tray_icon.cpp" />
+    <ClCompile Include="app\visual_alert.cpp" />
     <ClCompile Include="engine\src\config.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>

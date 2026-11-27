@@ -42,6 +42,12 @@ class OverlayWindow {
   void LayoutWindow();
   void ApplyLayoutStyle();
   RECT ComputeLayoutRect();
+  RECT TargetBounds(const MONITORINFO& info) const;
+  void UpdateFullscreenSuppression();
+  void EnsureTopmostAboveTaskbar();
+  static void CALLBACK OnForegroundChanged(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
+                                           LONG idObject, LONG idChild, DWORD eventThread,
+                                           DWORD eventTime);
   void ApplyWindowRect(const RECT& rect);
   enum class Layer { None, Bar, Ring, Handle };
   void AnimateWindowRect(const RECT& target, Layer outgoing);
@@ -65,6 +71,10 @@ class OverlayWindow {
   void HideScreenEdge();
   // 屏幕边框条的透明度过渡：出现/消失不再硬切。
   void RenderStrips(int alpha);
+  // 仅在屏幕边框高光激活且允许动效时低频驱动呼吸/流光（仅重绘受影响的那条边）。
+  void UpdateHighlightTimer(bool active);
+  void TickScreenEdgeHighlight();
+  double CurrentHighlightPhase();
   void UpdateWindowShape();
   void StartTimer();
   void StopTimer();
@@ -86,6 +96,9 @@ class OverlayWindow {
   winrt::Microsoft::UI::Xaml::Controls::TextBlock ringSummary_{nullptr};
   std::string ringDetailId_;
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer timer_{nullptr};
+  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer highlightTimer_{nullptr};
+  std::chrono::steady_clock::time_point highlightEpoch_{};
+  double highlightPhase_ = 0.65;
   winrt::event_token snapFrame_{};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer edgeTimer_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard edgeMotion_{nullptr};
@@ -124,8 +137,14 @@ class OverlayWindow {
   bool allDay_ = true;
   bool autoHideAtEdge_ = false;
   bool flushWithEdge_ = true;
+  bool hideInFullscreen_ = false;
+  bool coverTaskbar_ = false;
+  bool fullscreenSuppressed_ = false;
   bool edgeCollapsed_ = false;
   bool edgeClosing_ = false;
+  HWINEVENTHOOK foregroundHook_ = nullptr;
+  std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+  static OverlayWindow* activeInstance_;
   std::string monitorId_;
   int offsetX_ = 0;
   int offsetY_ = 12;
@@ -149,6 +168,20 @@ class OverlayWindow {
   POINT lastPressPoint_{};
   int pressCount_ = 0;
 
+  struct StripHighlight {
+    bool enabled = false;
+    int headPixel = -1;
+    int sideStart = 0;
+    int perimeter = 0;
+    int thickness = 0;
+    double phase = 0.65;
+    bool operator==(const StripHighlight& other) const {
+      return enabled == other.enabled && headPixel == other.headPixel &&
+             sideStart == other.sideStart && perimeter == other.perimeter &&
+             thickness == other.thickness && std::fabs(phase - other.phase) < 1e-4;
+    }
+  };
+
   struct EdgeStrip {
     HWND hwnd = nullptr;
     RECT bounds{};
@@ -156,6 +189,7 @@ class OverlayWindow {
     uint32_t fill = 0;
     uint32_t track = 0;
     std::vector<uint32_t> timeline;
+    StripHighlight highlight{};
     int alpha = -1;
   };
   std::array<EdgeStrip, 4> screenEdgeStrips_;

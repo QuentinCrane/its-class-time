@@ -8,16 +8,16 @@
 
 ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0b6cbf?style=flat-square)
 ![技术](https://img.shields.io/badge/native-C%2B%2B%2FWinRT%20%C2%B7%20SwiftUI-444444?style=flat-square)
-![状态](https://img.shields.io/badge/Windows%20%26%20macOS-preview-e08b00?style=flat-square)
+![发行](https://img.shields.io/github/v/release/QuentinCrane/its-class-time?style=flat-square)
 ![依赖](https://img.shields.io/badge/cloud%20%2F%20account-none-2e8b57?style=flat-square)
 
 [它能做什么](#它能做什么) · [为什么做](#为什么做这个) · [装上试试](#装上试试) · [现在到哪一步](#现在到哪一步) · [文档地图](#文档地图) · [路线图](#路线图)
 
 </div>
 
-![It's Class Time! 设计总览](assets/prototype/ItsClassTime-设计总览.png)
+![It's Class Time! 桌面课表与时间进度示意](assets/branding/readme-cover.png)
 
-> 上图是 V1.0 设计总览稿，用于说明产品形态，不是系统截图。真实通知由操作系统绘制，我们不会自己画一个“看起来像通知”的窗口。
+> 上图为产品宣传插画，实际界面请见下方截图。系统通知由操作系统绘制。
 
 ## 它能做什么
 
@@ -44,6 +44,7 @@
 - **分节长条**：每一节一根小条。上过的填满，正在上的按比例生长，没到的留白；课间是一小段不同颜色的间隔，午休是明显更长的分隔，不会被误画成一节课。
 - **圆环**：一个主环，中心是剩余时间。只想知道“还剩多久”的时候用它。
 - **屏幕边框**：沿显示器四边画一整圈进度，几乎不占地方（macOS 贴合整块屏幕四边且点击完全穿透，Windows 沿工作区四边避让任务栏）。全天可按各时段的时长分色，也可选择让进度颜色跟随当前是上课、课间还是午休。
+- **Windows 显示细节**：可自定义阶段颜色、边框渐变与进度前沿高光，并选择全屏时隐藏或覆盖任务栏。
 - **当前时段 / 全天**：屏幕小就只看这一段；想掌握整天节奏就全铺开。这只是展示过滤，提醒永远基于完整日程。
 
 ### 悬停才说话
@@ -65,6 +66,7 @@
 - 睡眠两小时再唤醒，只显示当下的状态，不会补发一串过期提醒。
 - 同一下课瞬间的“下课了”和“课间开始”合并成一条，不刷屏。
 - 一键暂停提醒：时间照走、进度照动，只是不响；恢复后不补发暂停期间的旧提醒。
+- **Windows 可选视觉提醒**：到点时可显示边缘柔光或短暂的放大时钟，默认关闭；它们是系统通知之外的补充。
 
 ### 安静地待着
 
@@ -92,21 +94,21 @@
 
 ## 现在到哪一步
 
-这是一个**正在开发中的预览版，不是 1.0**。下面按实际验证情况写，没做到的就不打勾。
+当前处于 **0.1.x 持续迭代阶段**。下面按实际验证情况说明平台支持和仍待复核的部分。
 
 | 部分 | 状态 |
 |---|---|
-| 作息时间引擎、编辑与冲突规则 | **双端通过全部共享测试向量与配置/时间轴/组件状态检查**（Windows 216 项、macOS 220 项，0 失败） |
+| 作息时间引擎、编辑与冲突规则 | **双端通过共享测试向量与配置/时间轴/组件状态检查**（Windows 244 项、macOS 220 项，0 失败） |
 | Windows 客户端 | 可构建、可安装、可常驻；长条 / 圆环 / 屏幕边框、设置窗口、托盘、悬停详情、拖动吸附已在实机核对 |
 | Windows 系统通知 | 代码与文案已完成，授权与真实弹出**待实机复核** |
 | Windows 安装包 | 离线 EXE 可用；安装路径、快捷方式、覆盖安装、卸载保留课表已验证；**未签名** |
-| macOS 客户端 | SwiftUI + AppKit 原生工程已与 Windows `v0.1.1` 全量同步功能并适配 macOS 26+ Liquid Glass；配置初始化、坏配置/不兼容版本/只读目录安全保护与单实例已通过冒烟验证，桌面交互与通知实弹**待逐项复核** |
+| macOS 客户端 | SwiftUI + AppKit 原生工程，支持 macOS 26+ Liquid Glass；配置恢复与单实例已通过冒烟验证，桌面交互与通知实弹**待逐项复核**。新增视觉提醒和部分外观选项目前为 Windows 专属 |
 | macOS 安装镜像 | `ItsClassTime.app` 与离线 `arm64.dmg` 可本地构建并完成本机 Ad-hoc 签名校验；**未公证**，拖拽安装待实测 |
-| CI 与双端 Release | 尚未接入 |
+| CI 与双端 Release | Windows 与 macOS 安装包通过构建工作流生成，发行包及校验值见 [Releases](https://github.com/QuentinCrane/its-class-time/releases) |
 
 > 时间语义的每一条规则都能在 [docs/FRD.md](docs/FRD.md) 找到出处，验证记录在 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
 
-### 界面实机截图（Windows 预览版）
+### 界面实机截图（Windows）
 
 ![Windows 圆环视图](assets/screenshots/windows-ring.png)
 
@@ -120,7 +122,7 @@
 
 ### Windows
 
-1. 到 **Releases** 下载 `ItsClassTime-Setup-<版本>-x64.exe`。首个 Release 发布之前，请按下面的「从源码构建」自己生成。
+1. 到 [Releases](https://github.com/QuentinCrane/its-class-time/releases/latest) 下载 `ItsClassTime-<版本>-Windows-x64-Setup.exe`。
 2. 双击安装，选择安装路径，可选创建桌面快捷方式。默认装到 `%LOCALAPPDATA%\Programs\ClassTime`，仅当前用户，并创建开始菜单项。
 3. 首次启动选择高中或大学模板，再按你的真实课表改。
 4. 关掉设置窗口。它会留在托盘里继续计时。
@@ -134,7 +136,7 @@
 
 ### macOS
 
-1. 到 **Releases** 下载 `ItsClassTime-<版本>-arm64.dmg`（首个 Release 发布前请用下方命令从源码本地构建）。
+1. 到 [Releases](https://github.com/QuentinCrane/its-class-time/releases/latest) 下载 `ItsClassTime-<版本>-macOS-arm64.dmg`，适用于 Apple Silicon Mac。
 2. 双击镜像，将 `ItsClassTime.app` 拖入「应用程序（Applications）」文件夹后打开。
 3. 首次启动在设置窗口挑选或新建作息模板，调整显示形态与通知权限。
 4. 关掉设置窗口，它会留在顶部菜单栏继续计时（左键展开液态玻璃控制面板，右键打开快捷菜单）。
@@ -142,7 +144,7 @@
 几点需要提前说明：
 
 - 系统要求 macOS 13 Ventura 及以上（macOS 26/27 自动启用原生 Liquid Glass 外观与无障碍适配）。
-- **当前预览镜像为本机 Ad-hoc 签名，尚未公证（Notarization）**，从网络下载首次打开可能需在「系统设置 → 隐私与安全性」放行。
+- **镜像中的应用使用 Ad-hoc 签名，尚未公证（Notarization）**，从网络下载首次打开可能需在「系统设置 → 隐私与安全性」放行。
 - 个人课表与设置保存在 `~/Library/Application Support/ClassTime`，升级或移除 `.app` 均不会删除课表。
 
 ## 从源码构建
@@ -169,7 +171,7 @@ tools\build-unpackaged.cmd
 # 构建原生应用包（产物：macos/build/app/ItsClassTime.app）
 ./macos/tools/build-app.sh
 
-# 打离线安装镜像（产物：macos/build/release/ItsClassTime-<版本>-arm64.dmg）
+# 打离线安装镜像（产物：macos/build/release/ItsClassTime-<版本>-macOS-arm64.dmg）
 ./macos/tools/build-dmg.sh
 ```
 
@@ -227,9 +229,9 @@ It'sClassTime/
 | 阶段 | 目标 | 状态 |
 |---|---|---|
 | M0 | 原生技术可行性：常驻、浮窗、即时通知 | 双端主体已构建；Windows 浮窗/托盘已核对，macOS 冒烟通过，双端通知实弹待复核 |
-| M1 | 作息引擎：预设、校验、进度、下一边界 | **双端完成**（Windows 216 项、macOS 220 项对等检查全部通过） |
-| M2 | 可日常使用的 MVP：三种视图、时间轴、双层编辑、暂停、开机启动 | 双端功能已对齐，桌面交互细节与通知实弹逐项复核中 |
-| M3 | 稳定性与发布：多显示器、单实例、CI、双端 Release | 双端离线安装包（Windows EXE / macOS DMG）已可用，CI 与签名公证进行中 |
+| M1 | 作息引擎：预设、校验、进度、下一边界 | **双端完成**（Windows 244 项、macOS 220 项检查全部通过） |
+| M2 | 可日常使用的 MVP：三种视图、时间轴、双层编辑、暂停、开机启动 | 双端核心功能可用；Windows 另有部分外观与视觉提醒选项，桌面交互和通知实弹仍在复核 |
+| M3 | 稳定性与发布：多显示器、单实例、CI、双端 Release | 提供双端离线安装包及构建工作流；签名公证与部分实机验收待完成 |
 
 后续功能池（自定义铃声、更多主题、跨设备同步）不在首版范围内，需要单独立项。详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -242,4 +244,4 @@ It'sClassTime/
 
 ## 许可证
 
-本仓库目前**尚未附带开源许可证**，在正式对外分发前会确定。在此之前，请不要将代码用于商业分发；引用需求文档与设计图时请注明出处。
+本仓库目前**尚未附带开源许可证**。引用需求文档与设计图时请注明出处。

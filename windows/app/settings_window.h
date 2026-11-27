@@ -1,6 +1,7 @@
 // 设置窗口：纯 C++/WinUI 3 构建界面，不依赖 XAML 代码生成。
 #pragma once
 
+#include <array>
 #include <functional>
 
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -12,7 +13,8 @@ namespace ClassTimeApp {
 
 class SettingsWindow {
  public:
-  explicit SettingsWindow(std::function<void()> exitRequested);
+  explicit SettingsWindow(std::function<void()> exitRequested,
+                          std::function<bool()> testVisualAlertRequested = nullptr);
   ~SettingsWindow();
 
   void Show();
@@ -58,9 +60,14 @@ class SettingsWindow {
   // 长条长度/背景色：拖动期间只更新预览，停顿后合并保存。
   void CommitBarLength();
   void CommitBarBackground();
+  void RefreshPhaseColorEditor();
+  void CommitPhaseColors();
   // 模板重命名防抖提交。
   void CommitTemplateName();
   void RefreshNotificationControls();
+  void RefreshVisualPreview();
+  void RefreshAlertColorEditor();
+  void CommitAlertColors();
   void RefreshGeneralControls();
   void ShowSection(const std::wstring& tag);
   void RevealSection();
@@ -145,6 +152,7 @@ class SettingsWindow {
   bool newSegment_ = false;
   bool allowClose_ = false;
   std::function<void()> exitRequested_;
+  std::function<bool()> testVisualAlertRequested_;
   std::string editingId_;
 
   winrt::Microsoft::UI::Xaml::Controls::NavigationView nav_{nullptr};
@@ -189,6 +197,7 @@ class SettingsWindow {
   };
   PreviewAppearance previewAppearance_[2];
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard previewMotion_{nullptr};
+  winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard previewHighlightMotion_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid displayOptionsHost_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::RectangleGeometry displayOptionsClip_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard displayPanelMotion_{nullptr};
@@ -198,6 +207,9 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::StackPanel screenEdgeControls_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel screenEdgeColorPanel_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid screenEdgeColorSegments_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid screenEdgeGradientRow_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch screenEdgeGradientToggle_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch screenEdgeHighlightToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Slider screenEdgeSlider_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock screenEdgeValue_{nullptr};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer thicknessTimer_{nullptr};
@@ -213,9 +225,20 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ColorPicker barColorPicker_{nullptr};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer barColorTimer_{nullptr};
   std::optional<std::string> pendingBarBackground_;
+  // 全局阶段配色（上课 / 课间 / 午休）：分项切换共用同一取色器，停顿后防抖写入。
+  winrt::Microsoft::UI::Xaml::Controls::Grid phaseColorTargetSegments_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch phaseColorToggle_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock phaseColorHint_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ColorPicker phaseColorPicker_{nullptr};
+  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer phaseColorTimer_{nullptr};
+  int phaseColorTarget_ = 0;
+  std::array<std::optional<std::string>, 3> pendingPhaseColors_{};
+  std::array<std::string, 3> lastSchedulePhaseColors_{};
   bool previewHovered_ = false;
   winrt::Microsoft::UI::Xaml::Controls::Button reanchorButton_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch visibleToggle_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch hideInFullscreenToggle_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch coverTaskbarToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch edgeAutoHideToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch flushToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch notificationsToggle_{nullptr};
@@ -223,6 +246,22 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch focusToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch restToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch lunchToggle_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch screenEdgeFlashToggle_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch dropClockToggle_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::StackPanel dropClockOptionsPanel_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid dropClockStyleSegments_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid dropClockPositionSegments_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid dropClockSkinGrid_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Canvas visualPreviewCanvas_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock visualPreviewCaption_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid alertColorTargetSegments_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch alertColorToggle_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock alertColorHint_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ColorPicker alertColorPicker_{nullptr};
+  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer alertColorTimer_{nullptr};
+  int alertColorTarget_ = 0;
+  std::array<std::optional<std::string>, 5> pendingAlertColors_{};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock visualTestResultText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch startupToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock versionText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock configPathText_{nullptr};

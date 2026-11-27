@@ -1,0 +1,132 @@
+name: Build and publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag matching the app metadata, e.g. v0.1.2'
+        required: true
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - 'docs/releases/v*.md'
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release: v')
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check version metadata and release notes
+        id: version
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          PUSH_MESSAGE: ${{ github.event.head_commit.message }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import plistlib
+          import re
+          import xml.etree.ElementTree as ET
+
+          identity = ET.parse('windows/Package.appxmanifest').getroot().find('{*}Identity')
+          windows_version = identity.attrib['Version']
+          if not re.fullmatch(r'\d+\.\d+\.\d+\.0', windows_version):
+              raise SystemExit(f'Unexpected Windows package version: {windows_version}')
+          version = windows_version.rsplit('.', 1)[0]
+          with open('macos/Resources/Info.plist', 'rb') as f:
+              mac_version = plistlib.load(f)['CFBundleShortVersionString']
+          if mac_version != version:
+              raise SystemExit(f'Platform versions do not match: {version} vs {mac_version}')
+          resource = pathlib.Path('windows/ClassTime.rc').read_text(encoding='utf-8')
+          parts = version.split('.')
+          if f'FILEVERSION {",".join(parts)},0' not in resource or f'"ProductVersion", "{version}.0"' not in resource:
+              raise SystemExit('Windows executable metadata does not match package version')
+          tag = f'v{version}'
+          requested = os.environ.get('REQUESTED_TAG', '')
+          if requested and requested != tag:
+              raise SystemExit(f'Requested {requested}, but app metadata specifies {tag}')
+          if os.environ['EVENT_NAME'] == 'push' and os.environ['PUSH_MESSAGE'].splitlines()[0] != f'release: {tag}':
+              raise SystemExit('Release commit message does not match app version')
+          if not pathlib.Path(f'docs/releases/{tag}.md').is_file():
+              raise SystemExit(f'Missing release notes: docs/releases/{tag}.md')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'tag={tag}\nversion={version}\n')
+          PY
+
+  windows:
+    needs: version
+    uses: ./.github/workflows/build-windows.yml
+
+  macos:
+    needs: version
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and check macOS installer
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          test "$(uname -m)" = arm64
+          ./macos/tools/build-dmg.sh
+          dmg="macos/build/release/ItsClassTime-${VERSION}-macOS-arm64.dmg"
+          test -f "$dmg"
+          hdiutil verify "$dmg"
+          mount="$RUNNER_TEMP/classtime-dmg"
+          mkdir -p "$mount"
+          hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mount"
+          trap 'hdiutil detach "$mount" >/dev/null' EXIT
+          app="$mount/ItsClassTime.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
+          lipo -verify_arch arm64 "$app/Contents/MacOS/ItsClassTime"
+          codesign --verify --deep --strict "$app"
+      - name: Upload macOS installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: macos/build/release/ItsClassTime-*-macOS-arm64.dmg
+          if-no-files-found: error
+
+  publish:
+    needs: [version, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-installer'
+          path: release-assets
+          merge-multiple: true
+      - name: Create normal GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          windows="ItsClassTime-${VERSION}-Windows-x64-Setup.exe"
+          macos="ItsClassTime-${VERSION}-macOS-arm64.dmg"
+          test -f "release-assets/$windows"
+          test -f "release-assets/$macos"
+          if gh release view "$TAG" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Release or tag $TAG already exists; refusing to replace it." >&2
+            exit 1
+          fi
+          (cd release-assets && sha256sum "$windows" "$macos" > SHA256SUMS.txt)
+          gh release create "$TAG" \
+            "release-assets/$windows" "release-assets/$macos" release-assets/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" \
+            --title "It's Class Time! $TAG" \
+            --notes-file "docs/releases/$TAG.md" \
+            --latest

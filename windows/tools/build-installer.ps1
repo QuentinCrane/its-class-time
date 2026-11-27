@@ -76,4 +76,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup build failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "Installer: $(Join-Path $releaseDir "ItsClassTime-Setup-$appVersion-x64.exe")"
+Write-Host "Installer: $(Join-Path $releaseDir "ItsClassTime-$appVersion-Windows-x64-Setup.exe")"

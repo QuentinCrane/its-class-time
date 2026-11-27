@@ -7,7 +7,7 @@
 
 | 部分 | 状态 | 说明 |
 |---|---|---|
-| 作息引擎 `engine/` | **已编译并测试** | 纯 C++17，无 WinRT 依赖；`engine_tests` 216 项检查全部通过（含 `shared/test-cases`、配置兼容性、时间轴拖动和组件状态，0 失败） |
+| 作息引擎 `engine/` | **已编译并测试** | 纯 C++17，无 WinRT 依赖；`engine_tests` 244 项检查全部通过（含 `shared/test-cases`、配置兼容性、时间轴拖动和组件状态，0 失败） |
 | 配置/今日覆盖/去重 | **已编译并测试** | JSON 往返、原子写入、失效覆盖清理、事件键去重 |
 | 悬浮层 `app/overlay_window.*` | **源码通过 + 实机渲染验证** | 分节长条/圆环/屏幕边框在解包模式实机渲染成功（截图核对）；四边吸附、左右竖向排列与状态配色为 2026-11-22 新增，待实机核对 |
 | 设置窗口 `app/settings_window.*` | **实机渲染验证** | 纯代码构建 UI；NavigationView、模板选择、星期勾选、时段列表、编辑浮层全部正常显示 |
@@ -86,7 +86,7 @@ $env:CLASSTIME_DATA_DIR = "<某个测试目录>"; $env:CLASSTIME_SHOW_SETTINGS =
 ```
 
 脚本重新编译解包版，把应用、两份作息预设和 Microsoft Windows App Runtime 1.6.9
-打入 `windows\build\release\ItsClassTime-Setup-<版本>-x64.exe`。首次构建下载并校验
+打入 `windows\build\release\ItsClassTime-<版本>-Windows-x64-Setup.exe`。首次构建下载并校验
 运行时的 SHA-256，之后使用 `build\installer-tools\` 下的缓存。目标电脑可以离线安装。
 向导源码和浅色、深色插画在 `installer/`，构建已使用 Inno Setup 7.1.1。
 
@@ -144,6 +144,8 @@ windows/
 │   ├── services.*               # 配置、今日覆盖、快照、持久化
 │   ├── boundary_monitor.*       # 边界等待线程与去重
 │   ├── notification_service.*   # 系统即时通知与合并文案
+│   ├── visual_alert.*           # 可选视觉到点动效（四边柔光闪光 / 掉落 3D 时钟）
+│   ├── display_utils.h          # 多显示器查找与全屏应用检测
 │   ├── overlay_window.*         # 悬浮长条/圆环（代码构建 UI）
 │   ├── settings_window.*        # 设置窗口（纯代码构建 UI，无 XAML）
 │   └── tray_icon.*              # 托盘图标与菜单
@@ -168,7 +170,7 @@ windows\build\engine\engine_tests.exe "E:\path\to\repo"
 - **时间语义**：半开区间 `[start,end)`、进度 clamp、下一边界、focus 序号；见 `engine/src/time_engine.cpp`。
 - **今日覆盖 vs 模板**：`Services::ApplyScheduleEdit`；永久修改不会触碰 `dailyOverrides`，今日覆盖也不会写回模板。
 - **编辑策略**：`engine/src/edit_ops.cpp` 的 `Shift`/`Keep`，冲突返回 `conflictIds`，UI 不静默移动时段。
-- **通知**：`BoundaryMonitor` 只按最近边界唤醒；到点后以真实时钟复核，30 秒容差外跳过；`NotificationService` 合并同一秒事件。
+- **通知**：`BoundaryMonitor` 只按最近边界唤醒；到点后以真实时钟复核，30 秒容差外跳过；`NotificationService` 合并同一秒事件。可选开启的视觉到点动效（`VisualAlert`：四边柔光闪光与掉落 3D 电子/机械时钟）共用同一边界组装逻辑，仅作系统通知补充，不抢焦点并遵守全屏隐藏与减弱动态效果。
 - **暂停**：只置 `notifications.muted`，进度与边界判断继续。
 - **悬浮窗**：`OverlappedPresenter` 去边框、`SetWindowPos(HWND_TOPMOST)`、`WS_EX_NOACTIVATE`；四边吸附，左右贴边切换为竖向分节。默认 `flushWithEdge=true`，贴边时 0 间距、靠边圆角削平并关闭 DWM 外框，可直接落在任务栏上沿；关闭后恢复 12 DIP 悬浮间距。不承诺覆盖独占全屏。
 - **多显示器**：在「显示与位置」选择指定显示器或跟随系统主显示器；只改变组件所在位置，不更改系统主屏。已保存的显示器不可用时，组件定位回退到系统主屏。
@@ -189,6 +191,7 @@ windows\build\engine\engine_tests.exe "E:\path\to\repo"
    文件被独占或只读导致无法安全恢复时，应提示并停止启动。
 10. 通知权限被关闭：悬浮层正常工作，设置页显示权限状态（T21）。
 11. 在「作息计划」新增复制模板和空白模板，编辑后切换并重启，确认各模板独立保存；若今天已有临时调整，创建或切换模板后今天仍按临时计划执行。
+12. 在「通知 → 视觉到点动效」分别开启「全屏边缘闪光提醒」与「掉落 3D 放大时钟提醒」，切换 `3D 电子数字 / 3D 机械表盘` 与 `顶部居中 / 右上角 / 左上角` 并点击「测试视觉提醒」，核对不抢焦点、悬停暂留与点击立即收回。
 
 ## 8. 已知限制 / 后续
 
