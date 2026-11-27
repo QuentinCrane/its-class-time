@@ -5,11 +5,19 @@
 ## Apple
 
 1. [SwiftUI Settings](https://developer.apple.com/documentation/swiftui/settings) — macOS 设置窗口。
-2. [NSStatusItem](https://developer.apple.com/documentation/appkit/nsstatusitem) — 菜单栏常驻入口。
+2. [NSStatusItem](https://developer.apple.com/documentation/appkit/nsstatusitem) — 菜单栏常驻入口，以及 macOS 27 `expandedInterfaceDelegate` / `NSStatusItemExpandedInterfaceSession`。
 3. [NSWindow.level](https://developer.apple.com/documentation/appkit/nswindow/level-swift.property) — 浮动窗口层级。
 4. [NSWindow.CollectionBehavior](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct) — Spaces/全屏相关行为与适用边界。
 5. [UNUserNotificationCenter](https://developer.apple.com/documentation/usernotifications/unusernotificationcenter) — 系统通知权限与投递。
 6. [UNUserNotificationCenter.add](https://developer.apple.com/documentation/usernotifications/unusernotificationcenter/add(_:withcompletionhandler:)) — `UNNotificationRequest(trigger: nil)` 可请求立即投递。
+7. [Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass) — macOS 26+ Liquid Glass 结构层级、移除不透明背景与系统无障碍适配规范。
+8. [Applying Liquid Glass to custom views](https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views) — SwiftUI `.glassEffect(_:in:)`、`GlassEffectContainer`、`.buttonStyle(.glass)` 与 `.scrollEdgeEffectStyle(_:for:)`。
+9. [NSGlassEffectView](https://developer.apple.com/documentation/appkit/nsglasseffectview) — AppKit 液态玻璃容器（macOS 26+ `cornerRadius`/`style`/`tintColor`，macOS 27+ `effectIsInteractive`）。
+10. [HIG: Menu Bar Extras](https://developer.apple.com/design/human-interface-guidelines/the-menu-bar) — macOS 顶部状态栏模板图标、紧凑信息展示与用户可配置显示规范。
+11. [NSScreen.screens](https://developer.apple.com/documentation/appkit/nsscreen/screens) — 系统主显示器固定为 `screens.first`（带菜单栏、原点 `(0,0)`），区别于随键盘焦点变化的 `NSScreen.main`；工作区避让菜单栏/刘海与 Dock 使用 `visibleFrame`。
+12. [SMAppService](https://developer.apple.com/documentation/servicemanagement/smappservice) — macOS 13+ 登录启动项注册、状态查询（`.enabled` / `.requiresApproval`）与跳转系统登录项设置（`openSystemSettingsLoginItems()`）。
+13. [SwiftUI ColorPicker](https://developer.apple.com/documentation/swiftui/colorpicker) — 接入 macOS 原生系统取色面板（`NSColorPanel`），支持 `supportsOpacity: false`。
+14. [SpatialTapGesture](https://developer.apple.com/documentation/swiftui/spatialtapgesture) — macOS 13+ 捕获带坐标的双击手势，用于时间轴空白处双击新增时段。
 
 ## Microsoft
 

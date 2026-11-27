@@ -1,6 +1,6 @@
 # DEVELOPMENT｜本地开发与 GitHub 维护指南
 
-> **这份文档回答**：拿到仓库后怎么在本机跑起来、按什么顺序推进、发布前哪些步骤不能省。Windows 端已经有可运行的工程，macOS 端仍待创建；下面的步骤按“当前实际状态”标注。
+> **这份文档回答**：拿到仓库后怎么在本机跑起来、按什么顺序推进、发布前哪些步骤不能省。Windows 与 macOS 两端目前均已有可本机直接构建、跑通测试并打包的原生工程（见 [windows/README.md](../windows/README.md) 与 [macos/README.md](../macos/README.md)）。
 
 ## 1. 本地开发环境
 
@@ -36,12 +36,28 @@ windows\build\engine\engine_tests.exe "<仓库绝对路径>"
 
 详细依赖版本、实机验证边界与已知限制见 [windows/README.md](../windows/README.md)。
 
+### macOS 最短上手路径
+
+```bash
+# 仅需 Command Line Tools（swift / iconutil / codesign / hdiutil），无需完整 Xcode.app
+./macos/tools/build-app.sh
+# 产物：macos/build/app/ItsClassTime.app
+
+# 打包离线安装镜像（产物：macos/build/release/ItsClassTime-0.1.1-arm64.dmg）
+./macos/tools/build-dmg.sh
+
+# 单独验证作息时间引擎（220 项共享与对等检查）
+swift run --package-path macos engine-tests "$(pwd)"
+```
+
+详细实现映射与手工验收步骤见 [macos/README.md](../macos/README.md)。
+
 ## 2. 建仓方式（Monorepo）
 
 ```text
 It'sClassTime/
-├── macos/                   # Xcode 真实工程（占位，待生成）
-├── windows/                 # VS C++/WinRT 真实工程（已生成，可构建运行）
+├── macos/                   # SwiftUI + AppKit 原生工程（可构建 .app / .dmg 并跑通 220 项引擎检查）
+├── windows/                 # C++/WinRT + WinUI 3 原生工程（可构建 .exe 与离线安装包并跑通 216 项引擎检查）
 ├── shared/
 │   ├── schemas/
 │   ├── presets/
@@ -50,7 +66,7 @@ It'sClassTime/
 │   ├── prototype/
 │   └── screenshots/
 ├── docs/
-├── .github/workflows/       # 尚未添加工作流，先保证本机可构建
+├── .github/workflows/       # 尚未添加工作流，先保证双端本机可构建
 ├── AGENTS.md
 └── README.md
 ```
@@ -63,8 +79,8 @@ It'sClassTime/
 
 ### Step 0：创建项目
 
-1. Windows：**已有** `windows/ClassTime.sln`（C++ WinUI 3 Desktop）。若要重建，注意选 C++ 而不是 C#，并保留现有的纯代码 UI 装配方式。
-2. macOS：新建 SwiftUI macOS App，先编译空窗口。
+1. Windows：**已有** `windows/ClassTime.sln`（C++ WinUI 3 Desktop）与无 MSBuild 直构脚本 `tools/build-unpackaged.cmd`。
+2. macOS：**已有** `macos/Package.swift`（SwiftUI + AppKit）与 `tools/build-app.sh` / `tools/build-dmg.sh`，仅需 Command Line Tools 即可构建签名。
 3. 仓库内的 docs、shared、assets、AGENTS、README 是跨端契约；新建工程时不要复制出第二份。
 4. 用各自 IDE 将平台工程目录加入 Git，构建产物由 `.gitignore` 排除。
 
@@ -95,7 +111,7 @@ It'sClassTime/
 ### Step 5：CI / Release
 
 - **当前尚未接入 CI。** 先在两端完成本机构建与安装验证，再写“确实能跑通”的工作流，而不是先提交一份没人跑过的 YAML。
-- 计划：`macos-*` runner 构建 Xcode 工程，`windows-*` runner 构建 C++ 工程并跑引擎测试；先上传 artifacts。
+- 计划：`macos-*` runner 构建 macOS 工程并跑引擎测试，`windows-*` runner 构建 C++ 工程并跑引擎测试；先上传 artifacts。
 - 无签名的产物**不标成正式可安装发行包**。Windows 安装包目前就是未签名状态，需明确告知 SmartScreen 风险。
 - 通过本地安装测试后，再配置 Apple Developer ID + notarization、Windows 代码签名/信任链，并统一到单个 GitHub Release。
 - 版本号与 changelog 统一维护；mac 和 windows 可各自标注“本次改动”。
@@ -112,13 +128,13 @@ git push -u origin feat/windows-hover-fix
 ```
 
 - 一个分支只做一件事，合并前保持 `main` 可构建。
-- 提交信息建议带范围前缀：`feat(windows):`、`fix(engine):`、`docs:`、`chore:`。
+- 提交信息建议带范围前缀：`feat(windows):`、`feat(macos):`、`fix(engine):`、`docs:`、`chore:`。
 - 不需要 monorepo 管理框架、Git submodule、Git LFS 或 NPM/Node 构建链。
-- Windows 构建产物（`windows/build`、`windows/packages`）已在 `.gitignore` 中，不要提交编译器生成的中间文件。
+- 两端构建产物（`windows/build`、`windows/packages`、`macos/.build`、`macos/build`）均已在 `.gitignore` 中，不要提交编译器生成的中间文件。
 
 ## 5. 发行重要说明
 
 - GitHub Actions 可自动化**构建**，但 macOS 公证与 Windows 代码签名是另外的步骤，需要开发者身份、证书/权限等前提。
 - 试验版本可先作为本地调试程序运行。别在还没解决签名时写“零提示安装”一类不真实承诺。
-- 当前状态：**Windows 有可运行源码与未签名安装包**；macOS 尚无工程，也没有 `.app` 成品。双端 Release 尚未发布。
+- 当前状态：**Windows 有可运行源码与未签名离线安装 EXE；macOS 有可运行源码、本机 Ad-hoc 签名 `ItsClassTime.app` 与离线 `.dmg` 镜像**。双端正式签名/公证与 GitHub Release 尚未发布。
 - Windows 的通知注册与开机启动属于打包相关能力，解包模式下只能验证界面与引擎；相关结论要注明是在哪种形态下测得的。

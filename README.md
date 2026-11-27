@@ -8,10 +8,10 @@
 
 ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0b6cbf?style=flat-square)
 ![技术](https://img.shields.io/badge/native-C%2B%2B%2FWinRT%20%C2%B7%20SwiftUI-444444?style=flat-square)
-![状态](https://img.shields.io/badge/Windows-preview-e08b00?style=flat-square)
+![状态](https://img.shields.io/badge/Windows%20%26%20macOS-preview-e08b00?style=flat-square)
 ![依赖](https://img.shields.io/badge/cloud%20%2F%20account-none-2e8b57?style=flat-square)
 
-[它能做什么](#它能做什么) · [为什么做](#为什么做这个) · [装上试试](#装上试试windows) · [现在到哪一步](#现在到哪一步) · [文档地图](#文档地图) · [路线图](#路线图)
+[它能做什么](#它能做什么) · [为什么做](#为什么做这个) · [装上试试](#装上试试) · [现在到哪一步](#现在到哪一步) · [文档地图](#文档地图) · [路线图](#路线图)
 
 </div>
 
@@ -43,21 +43,21 @@
 
 - **分节长条**：每一节一根小条。上过的填满，正在上的按比例生长，没到的留白；课间是一小段不同颜色的间隔，午休是明显更长的分隔，不会被误画成一节课。
 - **圆环**：一个主环，中心是剩余时间。只想知道“还剩多久”的时候用它。
-- **屏幕边框**（Windows）：沿显示器工作区四边画一整圈进度，几乎不占地方。全天可按各时段的时长分色，也可选择让进度颜色跟随当前是上课、课间还是午休。
+- **屏幕边框**：沿显示器四边画一整圈进度，几乎不占地方（macOS 贴合整块屏幕四边且点击完全穿透，Windows 沿工作区四边避让任务栏）。全天可按各时段的时长分色，也可选择让进度颜色跟随当前是上课、课间还是午休。
 - **当前时段 / 全天**：屏幕小就只看这一段；想掌握整天节奏就全铺开。这只是展示过滤，提醒永远基于完整日程。
 
 ### 悬停才说话
 
-鼠标停上去，才展开课程名、第几节、起止时间、已过与剩余、百分比、下一段预告。不悬停时保持最窄，不闪、不跳、不抢焦点。四条边都能吸附：上下保持横排，左右自动转成竖向排列。多屏时可在「显示与位置」选择组件所在的显示器，或跟随系统主显示器。默认紧贴任务栏/屏幕边缘，靠边一侧以小圆角接续；想要悬浮感可以关掉「紧贴边缘」。拖歪了？连续点三下它，沿当前边回到居中。
+鼠标停上去，才展开课程名、第几节、起止时间、已过与剩余、百分比、下一段预告。不悬停时保持最窄，不闪、不跳、不抢焦点。四条边都能吸附：上下保持横排，左右自动转成竖向排列。多屏时可在「显示与位置」选择组件所在的显示器，或跟随系统主显示器。默认紧贴任务栏或屏幕边缘，靠边一侧以小圆角接续；想要悬浮感可以关掉「紧贴边缘」。拖歪了？连续点三下它，沿当前边回到居中。
 
 ### 改得动的课表
 
-- 高中 / 大学两份模板只是起点，全部可改：改名、改起止、增删时段、调午休，还能按星期启用。
+- 高中 / 大学两份模板只是起点，全部可改：改名、改起止、增删时段、调午休，还能按星期启用，并可新增复制或空白的自定义模板。
 - **数字框精确到 1 分钟，滑块按 5 分钟微调。** 手输 121 分钟不会被滑块悄悄改成 120。
-- **Windows 时间轴**：拖动时段或两端调整时间，可选 1、5、15 分钟步进；也可复制时段并在空白处新增。
+- **作息时间轴**：拖动时段或两端调整时间，可选 1、5、15 分钟步进；也可复制时段并在空白处双击新增。
 - **「仅今天」和「永久修改」分开放。** 临时调课不会污染常规模板；改模板也不会偷偷改掉今天。
 - 改时长会影响到后面的课时，你可以选「顺延后续」或「后续保持原时间」；冲突就拦下来，并明确指出是哪一行。
-- Windows 分节长条可调整整体长度和背景色，也可恢复默认长度与系统背景。
+- 分节长条可调整整体长度和背景色，也可恢复默认长度与系统/液态玻璃背景。
 
 ### 靠得住的提醒
 
@@ -96,11 +96,12 @@
 
 | 部分 | 状态 |
 |---|---|
-| 作息时间引擎、编辑与冲突规则 | Windows 端已通过 216 项检查（共享测试向量、配置兼容性、时间轴拖动和组件状态），0 失败 |
+| 作息时间引擎、编辑与冲突规则 | **双端通过全部共享测试向量与配置/时间轴/组件状态检查**（Windows 216 项、macOS 220 项，0 失败） |
 | Windows 客户端 | 可构建、可安装、可常驻；长条 / 圆环 / 屏幕边框、设置窗口、托盘、悬停详情、拖动吸附已在实机核对 |
 | Windows 系统通知 | 代码与文案已完成，授权与真实弹出**待实机复核** |
 | Windows 安装包 | 离线 EXE 可用；安装路径、快捷方式、覆盖安装、卸载保留课表已验证；**未签名** |
-| macOS 客户端 | 尚未开始，`macos/` 目前是占位目录 |
+| macOS 客户端 | SwiftUI + AppKit 原生工程已与 Windows `v0.1.1` 全量同步功能并适配 macOS 26+ Liquid Glass；配置初始化、坏配置/不兼容版本/只读目录安全保护与单实例已通过冒烟验证，桌面交互与通知实弹**待逐项复核** |
+| macOS 安装镜像 | `ItsClassTime.app` 与离线 `arm64.dmg` 可本地构建并完成本机 Ad-hoc 签名校验；**未公证**，拖拽安装待实测 |
 | CI 与双端 Release | 尚未接入 |
 
 > 时间语义的每一条规则都能在 [docs/FRD.md](docs/FRD.md) 找到出处，验证记录在 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
@@ -115,7 +116,9 @@
 
 *早期版本的显示设置截图；当前页面已调整为突出实时预览的布局。*
 
-## 装上试试（Windows）
+## 装上试试
+
+### Windows
 
 1. 到 **Releases** 下载 `ItsClassTime-Setup-<版本>-x64.exe`。首个 Release 发布之前，请按下面的「从源码构建」自己生成。
 2. 双击安装，选择安装路径，可选创建桌面快捷方式。默认装到 `%LOCALAPPDATA%\Programs\ClassTime`，仅当前用户，并创建开始菜单项。
@@ -128,6 +131,19 @@
 - **安装包没有代码签名**，SmartScreen 可能拦一下；介意的话请从源码构建。
 - 在没装 Windows App Runtime 的干净机器上，首次部署流程仍待验证。
 - 卸载后个人课表保留在 `%LOCALAPPDATA%\ClassTime`，重装可继续用。
+
+### macOS
+
+1. 到 **Releases** 下载 `ItsClassTime-<版本>-arm64.dmg`（首个 Release 发布前请用下方命令从源码本地构建）。
+2. 双击镜像，将 `ItsClassTime.app` 拖入「应用程序（Applications）」文件夹后打开。
+3. 首次启动在设置窗口挑选或新建作息模板，调整显示形态与通知权限。
+4. 关掉设置窗口，它会留在顶部菜单栏继续计时（左键展开液态玻璃控制面板，右键打开快捷菜单）。
+
+几点需要提前说明：
+
+- 系统要求 macOS 13 Ventura 及以上（macOS 26/27 自动启用原生 Liquid Glass 外观与无障碍适配）。
+- **当前预览镜像为本机 Ad-hoc 签名，尚未公证（Notarization）**，从网络下载首次打开可能需在「系统设置 → 隐私与安全性」放行。
+- 个人课表与设置保存在 `~/Library/Application Support/ClassTime`，升级或移除 `.app` 均不会删除课表。
 
 ## 从源码构建
 
@@ -147,7 +163,17 @@ tools\build-unpackaged.cmd
 
 完整的环境要求、依赖版本、已知限制和手工验收清单见 [windows/README.md](windows/README.md)。
 
-**macOS**：工程尚未创建。计划用 Xcode 新建 SwiftUI App，先用 AppKit 验证菜单栏常驻、不抢焦点的浮动面板和系统即时通知，再接同一套时间语义测试。步骤见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+**macOS**（Swift + SwiftUI + AppKit，仅需 Command Line Tools 即可构建，不强依赖完整 Xcode.app）：
+
+```bash
+# 构建原生应用包（产物：macos/build/app/ItsClassTime.app）
+./macos/tools/build-app.sh
+
+# 打离线安装镜像（产物：macos/build/release/ItsClassTime-<版本>-arm64.dmg）
+./macos/tools/build-dmg.sh
+```
+
+完整的构建说明、工具链兼容细节与手工验收清单见 [macos/README.md](macos/README.md)。
 
 两端都必须读取 `shared/presets/` 的预设，并跑通 `shared/test-cases/` 的同一组测试向量——时间规则不允许“各写各的”。
 
@@ -156,14 +182,14 @@ tools\build-unpackaged.cmd
 ```text
 It'sClassTime/
 ├── windows/     # C++/WinRT 工程、作息引擎、测试、构建与打包脚本
-├── macos/       # 占位，待创建
+├── macos/       # SwiftUI + AppKit 工程、作息引擎、测试、.app 与 .dmg 打包脚本
 ├── shared/      # 双端共用的 JSON Schema、预设、测试向量
 ├── docs/        # 产品、功能、设计、架构、验收文档
 ├── assets/      # 原型图与实机截图
 └── AGENTS.md    # 给 AI 编码助手的硬约束
 ```
 
-> 工程标识（`ClassTime.sln`、`ClassTimeApp.exe`、配置目录 `ClassTime`）沿用历史命名，界面与文档中的产品名统一为 **It's Class Time!**（中文 **“上课”时间到！**）。
+> 工程与配置标识（Windows：`ClassTime.sln`、`ClassTimeApp.exe`；macOS：`ItsClassTime.app`；配置目录均为 `ClassTime`）保持稳定，界面与文档中的产品名统一为 **It's Class Time!**（中文 **“上课”时间到！**）。
 
 ## 文档地图
 
@@ -180,6 +206,7 @@ It'sClassTime/
 | [docs/REFERENCES.md](docs/REFERENCES.md) | 用到的 Apple / Microsoft / GitHub 官方文档 |
 | [AGENTS.md](AGENTS.md) | 给 AI 编码助手（也给人）的硬约束 |
 | [windows/README.md](windows/README.md) | Windows 端的构建、验证边界与实现映射 |
+| [macos/README.md](macos/README.md) | macOS 端的构建、打包与手工验收指南 |
 | [shared/schemas/schedule.schema.json](shared/schemas/schedule.schema.json) | 作息 JSON 的结构契约 |
 | [shared/presets/](shared/presets) | 高中 / 大学可编辑初始模板 |
 | [shared/test-cases/time-engine.json](shared/test-cases/time-engine.json) | 双端共用的时间引擎测试向量 |
@@ -199,10 +226,10 @@ It'sClassTime/
 
 | 阶段 | 目标 | 状态 |
 |---|---|---|
-| M0 | 原生技术可行性：常驻、浮窗、即时通知 | Windows 主体通过，通知待复核；macOS 未开始 |
-| M1 | 作息引擎：预设、校验、进度、下一边界 | Windows 完成并通过共享向量；macOS 待实现 |
-| M2 | 可日常使用的 MVP：两种视图、编辑、暂停、开机启动 | Windows 大部分完成，细节补验中 |
-| M3 | 稳定性与发布：多显示器、单实例、CI、双端 Release | 安装包已可用，其余进行中 |
+| M0 | 原生技术可行性：常驻、浮窗、即时通知 | 双端主体已构建；Windows 浮窗/托盘已核对，macOS 冒烟通过，双端通知实弹待复核 |
+| M1 | 作息引擎：预设、校验、进度、下一边界 | **双端完成**（Windows 216 项、macOS 220 项对等检查全部通过） |
+| M2 | 可日常使用的 MVP：三种视图、时间轴、双层编辑、暂停、开机启动 | 双端功能已对齐，桌面交互细节与通知实弹逐项复核中 |
+| M3 | 稳定性与发布：多显示器、单实例、CI、双端 Release | 双端离线安装包（Windows EXE / macOS DMG）已可用，CI 与签名公证进行中 |
 
 后续功能池（自定义铃声、更多主题、跨设备同步）不在首版范围内，需要单独立项。详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

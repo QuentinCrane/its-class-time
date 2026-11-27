@@ -2,7 +2,7 @@
 
 > 目标：**单一常驻应用进程 + 原生浮窗 + 简单的作息引擎 + 即时通知适配器**。不要为了两端一致额外做跨语言共享运行库。
 >
-> **这份文档回答**：两端各用哪些系统 API、进程与线程怎么分工、配置存在哪、哪些“看起来合理”的抽象是被刻意拒绝的。实现进度与构建方式见 [windows/README.md](../windows/README.md)。
+> **这份文档回答**：两端各用哪些系统 API、进程与线程怎么分工、配置存在哪、哪些“看起来合理”的抽象是被刻意拒绝的。双端实现进度与构建方式分别见 [windows/README.md](../windows/README.md) 与 [macos/README.md](../macos/README.md)。
 
 ## 1. 总体架构
 
@@ -82,7 +82,7 @@ NextBoundary(now) = 所有未来 start/end 中最早的一个
 
 ## 5. 配置存储
 
-- 两端启动时先读取随应用打包的 `shared/presets`（或构建时复制）；用户修改写入平台标准用户应用数据目录。Windows 当前为 `%LOCALAPPDATA%\ClassTime`（打包形态为 `%LOCALAPPDATA%\Packages\<包族名>\LocalState`），可用 `CLASSTIME_DATA_DIR` 覆盖以便隔离测试。
+- 两端启动时先读取随应用打包的 `shared/presets`（或构建时复制）；用户修改写入平台标准用户应用数据目录。Windows 当前为 `%LOCALAPPDATA%\ClassTime`（打包形态为 `%LOCALAPPDATA%\Packages\<包族名>\LocalState`），macOS 为 `~/Library/Application Support/ClassTime`，双端均可用 `CLASSTIME_DATA_DIR` 覆盖以便隔离测试。
 - 推荐最小文件：`config.json` 和可选 `runtime-state.json`（近期已发事件 ID）。
 - 写入必须临时文件+原子替换；无效 JSON 或 schema 版本不兼容时**备份原文件并安全降级**。
 - 预设样例和 schema 是跨端共同契约；如果未来改字段，要同时修改 schema、双端解析、测试向量和迁移说明。
