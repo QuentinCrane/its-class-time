@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "boundary_monitor.h"
+#include "boundary_wait.h"
 #include "services.h"
 
 namespace ClassTimeApp {
@@ -83,8 +84,8 @@ void BoundaryMonitor::Run() {
   std::string activeDate = anchor.DateKey();
   Services::Instance().ForgetNotificationsForOtherDays(activeDate);
 
-  constexpr int kLateToleranceSeconds = 30;
-  constexpr auto kWatchdog = std::chrono::seconds(60);
+  constexpr auto maxGap = std::chrono::seconds(BoundaryWait::kWatchdogSeconds + BoundaryWait::kToleranceSeconds);
+  auto lastSample = std::chrono::steady_clock::now();
 
   while (true) {
     {
@@ -95,6 +96,7 @@ void BoundaryMonitor::Run() {
         auto now = NowClock();
         lastCheckedSeconds = SecondsOfDay(now);
         activeDate = now.DateKey();
+        lastSample = std::chrono::steady_clock::now();
       }
       lock.unlock();
 
@@ -102,18 +104,22 @@ void BoundaryMonitor::Run() {
       auto plan = Services::Instance().PlanFor(now);
       const auto candidates = CollectBoundaries(plan.segments);
 
-      if (now.DateKey() != activeDate) {
+      const int nowSeconds = SecondsOfDay(now);
+      const auto sampledAt = std::chrono::steady_clock::now();
+      const bool newDate = now.DateKey() != activeDate;
+      lastCheckedSeconds = BoundaryWait::LowerBound(lastCheckedSeconds, nowSeconds, newDate,
+                                                     sampledAt - lastSample > maxGap);
+      lastSample = sampledAt;
+      if (newDate) {
         activeDate = now.DateKey();
         Services::Instance().ForgetNotificationsForOtherDays(activeDate);
-        lastCheckedSeconds = 0;
         Services::Instance().Refresh();
       }
 
-      const int nowSeconds = SecondsOfDay(now);
       std::vector<Candidate> due;
       for (const auto& candidate : candidates) {
         if (candidate.seconds <= lastCheckedSeconds || candidate.seconds > nowSeconds) continue;
-        if (nowSeconds - candidate.seconds > kLateToleranceSeconds) continue;  // 睡眠/启动后的过期事件
+        if (nowSeconds - candidate.seconds > BoundaryWait::kToleranceSeconds) continue;  // 睡眠/启动后的过期事件
         auto event = candidate.event;
         event.at = now;
         event.at.hour = candidate.seconds / 3600;
@@ -147,7 +153,8 @@ void BoundaryMonitor::Run() {
       lastCheckedSeconds = nowSeconds;
 
       // 计算下一次唤醒：最近边界，最多 60 秒（用于发现系统时间调整）。
-      auto nextBoundary = kWatchdog;
+      // Midnight changes the effective plan even when today's last class has ended.
+      auto nextBoundary = std::chrono::seconds(BoundaryWait::InitialWaitSeconds(nowSeconds));
       for (const auto& candidate : candidates) {
         if (candidate.seconds > nowSeconds) {
           const auto delta = std::chrono::seconds(candidate.seconds - nowSeconds);

@@ -98,7 +98,7 @@ void DesktopApp::Initialize() {
   tray_->Create(GetModuleHandleW(nullptr), [this](UINT command) { HandleTrayCommand(command); });
 
   services.SetChangeCallback([this](Services::Change change) {
-    if (monitor_) monitor_->RequestRefresh();
+    if (monitor_ && change != Services::Change::Presentation) monitor_->RequestRefresh();
     auto dispatcher = dispatcher_;
     if (dispatcher == nullptr) return;
     dispatcher.TryEnqueue([this, change] { ApplyState(change == Services::Change::Presentation); });

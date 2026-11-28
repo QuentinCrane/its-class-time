@@ -14,6 +14,7 @@
 #include "classtime/schedule.h"
 #include "classtime/time_engine.h"
 #include "../app/timeline_edit.h"
+#include "../app/boundary_wait.h"
 #include "../app/template_ops.h"
 #include "../app/widget_state.h"
 
@@ -838,6 +839,14 @@ void TestScreenEdgeTimeline(const classtime::Schedule& highSchool) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  using namespace ClassTimeApp::BoundaryWait;
+  Check(InitialWaitSeconds(86399) == 1, "23:59:59 唤醒于午夜");
+  Check(InitialWaitSeconds(0) == 60, "无近期边界按看门狗间隔等待");
+  Check(LowerBound(86399, 0, true, false) == -1, "连续跨日包含 00:00 边界");
+  Check(LowerBound(86399, 2, true, true) == 2, "睡眠跨日后跳过已到达的午夜边界");
+  Check(LowerBound(3600, 7200, false, true) == 7200, "长时间中断后不补发");
+  Check(LowerBound(3600, 3601, false, false) == 3600, "正常运行保留未处理区间");
+
   const std::string root = argc > 1 ? argv[1] : ".";
   std::printf("ClassTime 引擎测试，数据目录：%s\n", root.c_str());
 
