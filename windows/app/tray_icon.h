@@ -35,6 +35,7 @@ class TrayIcon {
   static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   LRESULT HandleMessage(UINT message, WPARAM wparam, LPARAM lparam);
   void ShowMenu();
+  POINT MenuPosition() const;
   void ShowFallbackMenu();
   void EnsureMenuWindow();
   void OpenMenuFlyout();

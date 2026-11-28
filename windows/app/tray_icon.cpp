@@ -42,7 +42,7 @@ bool TrayIcon::Create(HINSTANCE instance, CommandHandler handler) {
   data_.cbSize = sizeof(data_);
   data_.hWnd = window_;
   data_.uID = 1;
-  data_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+  data_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
   data_.uCallbackMessage = kCallbackMessage;
   data_.hIcon = icon_;
   wcsncpy_s(data_.szTip, tooltip_.c_str(), _TRUNCATE);
@@ -121,6 +121,8 @@ LRESULT TrayIcon::HandleMessage(UINT message, WPARAM wparam, LPARAM lparam) {
   }
   if (message == kCallbackMessage) {
     switch (LOWORD(lparam)) {
+      case NIN_KEYSELECT:
+      case NIN_SELECT:
       case WM_LBUTTONUP:
         if (handler_) handler_(kTrayOpenSettings);
         return 0;
@@ -138,6 +140,20 @@ LRESULT TrayIcon::HandleMessage(UINT message, WPARAM wparam, LPARAM lparam) {
     return 0;
   }
   return DefWindowProcW(window_, message, wparam, lparam);
+}
+
+POINT TrayIcon::MenuPosition() const {
+  NOTIFYICONIDENTIFIER id{};
+  id.cbSize = sizeof(id);
+  id.hWnd = window_;
+  id.uID = data_.uID;
+  RECT bounds{};
+  if (SUCCEEDED(Shell_NotifyIconGetRect(&id, &bounds))) {
+    return {(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+  }
+  POINT cursor{};
+  GetCursorPos(&cursor);
+  return cursor;
 }
 
 void TrayIcon::ShowMenu() {
@@ -217,9 +233,8 @@ void TrayIcon::ShowMenu() {
     });
     menu_ = flyout;
 
-    POINT cursor{};
-    GetCursorPos(&cursor);
-    SetWindowPos(menuHwnd_, HWND_TOPMOST, cursor.x, cursor.y, 2, 2,
+    const POINT anchor = MenuPosition();
+    SetWindowPos(menuHwnd_, HWND_TOPMOST, anchor.x, anchor.y, 2, 2,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     menuWindow_.Activate();
     // 等待内容岛完成布局后再定位菜单。
@@ -312,11 +327,10 @@ void TrayIcon::ShowFallbackMenu() {
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kTrayExit, L"退出");
 
-  POINT cursor{};
-  GetCursorPos(&cursor);
+  const POINT anchor = MenuPosition();
   SetForegroundWindow(window_);
   const UINT command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
-                                      cursor.x, cursor.y, 0, window_, nullptr);
+                                      anchor.x, anchor.y, 0, window_, nullptr);
   DestroyMenu(menu);
   PostMessageW(window_, WM_NULL, 0, 0);
   if (command != 0 && handler_) handler_(command);
