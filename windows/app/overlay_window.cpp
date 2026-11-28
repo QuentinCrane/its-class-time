@@ -367,9 +367,6 @@ void OverlayWindow::CreateNativeWindow() {
   root_.Children().Append(edgeHandle_);
   BindDrag();
 
-  // WinUI 首次 Activate 初始化内容岛。后续从托盘恢复使用无激活显示。
-  window_.Activate();
-
   hwnd_ = reinterpret_cast<HWND>(winrt::Microsoft::UI::GetWindowFromWindowId(appWindow.Id()));
   if (hwnd_ != nullptr) {
     // The presenter can leave a dialog frame around the XAML content.
@@ -1633,7 +1630,8 @@ void OverlayWindow::ShowOverlay() {
   UpdateFullscreenSuppression();
   if (fullscreenSuppressed_ || view_ == View::ScreenEdge) return;
   LayoutWindow();
-  ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+  // Show(false) initializes the XAML window without taking keyboard focus.
+  window_.AppWindow().Show(false);
   EnsureTopmostAboveTaskbar();
   ApplyState();
 }
