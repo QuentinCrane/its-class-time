@@ -43,6 +43,7 @@ class SettingsWindow {
   void RefreshTimeline(const std::vector<classtime::Segment>& segments);
   void RebuildTimelineBlocks(const std::vector<classtime::Segment>& segments);
   void FinishTimelineDrag(bool commit);
+  void RefreshTimelineScopeLabel();
   void ApplyTimelineEdit(const std::string& id, int startMinute, int endMinute);
   void PositionTimelineInitially();
   // 拖动入口：Move/ResizeStart/ResizeEnd 共用，捕获指针并记录初始分钟。

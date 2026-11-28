@@ -2645,19 +2645,20 @@ void SettingsWindow::Build() {
     Services::Instance().UpdatePresentation(presentation);
   });
   // 时间轴拖动：指针事件统一挂在画布上，块只负责发起。
-  timelineCanvas_.PointerMoved([this](auto const&, Input::PointerRoutedEventArgs const& args) {
+  const auto updateDragRange = [this](const Input::PointerRoutedEventArgs& args) {
+    const int minute = TimelineMinute(args.GetCurrentPoint(timelineCanvas_).Position().X);
+    const int step = Services::Instance().config().presentation.timelineSnapMinutes;
+    const auto range = DraggedTimelineRange({timelineDragStart_, timelineDragEnd_}, timelineDragMode_,
+                                             minute - timelineDragAnchorMinute_, step);
+    timelineDragCurrentStart_ = range.start;
+    timelineDragCurrentEnd_ = range.end;
+  };
+  timelineCanvas_.PointerMoved([this, updateDragRange](auto const&, Input::PointerRoutedEventArgs const& args) {
     if (timelineDragMode_ == TimelineDragMode::None || !timelineDragPointer_ ||
         args.Pointer().PointerId() != *timelineDragPointer_) return;
-    const int minuteAtPointer =
-        TimelineMinute(args.GetCurrentPoint(timelineCanvas_).Position().X);
-    const int step = Services::Instance().config().presentation.timelineSnapMinutes;
-    const auto range = DraggedTimelineRange({timelineDragStart_, timelineDragEnd_},
-                                             timelineDragMode_,
-                                             minuteAtPointer - timelineDragAnchorMinute_, step);
-    const int newStart = range.start;
-    const int newEnd = range.end;
-    timelineDragCurrentStart_ = newStart;
-    timelineDragCurrentEnd_ = newEnd;
+    updateDragRange(args);
+    const int newStart = timelineDragCurrentStart_;
+    const int newEnd = timelineDragCurrentEnd_;
 
     auto block = std::find_if(timelineBlocks_.begin(), timelineBlocks_.end(),
                               [this](const TimelineBlock& item) {
@@ -2690,12 +2691,13 @@ void SettingsWindow::Build() {
         overlap ? Windows::UI::ColorHelper::FromArgb(255, 188, 53, 66) : kindColor));
     timelineStatusText_.Text(hstring(
         (overlap ? std::wstring(L"⚠ 与其他时段重叠，松手将恢复原时间。")
-                 : L"正在调整（步进 " + std::to_wstring(step) + L" 分钟）：") +
+                 : L"正在调整（步进 " + std::to_wstring(Services::Instance().config().presentation.timelineSnapMinutes) + L" 分钟）：") +
         FormatClock(rangeStart) + L"–" + FormatClock(rangeEnd)));
     args.Handled(true);
   });
-  timelineCanvas_.PointerReleased([this](auto const&, Input::PointerRoutedEventArgs const& args) {
+  timelineCanvas_.PointerReleased([this, updateDragRange](auto const&, Input::PointerRoutedEventArgs const& args) {
     if (!timelineDragPointer_ || args.Pointer().PointerId() != *timelineDragPointer_) return;
+    updateDragRange(args);
     FinishTimelineDrag(true);
     args.Handled(true);
   });
@@ -3369,9 +3371,7 @@ void SettingsWindow::RebuildTimelineBlocks(const std::vector<classtime::Segment>
     timelineStatusText_.Text(L"暂无时段：双击时间轴空白处，在对应时刻新增。");
     return;
   }
-  timelineStatusText_.Text(planScope_.SelectedIndex() != 1
-                               ? L"显示常规模板时段；拖动调整会保存到模板。"
-                               : L"显示今天的计划；拖动调整只影响今天。");
+  RefreshTimelineScopeLabel();
 
   for (const auto& segment : segments) {
     TimelineBlock block;
@@ -3469,6 +3469,12 @@ void SettingsWindow::RebuildTimelineBlocks(const std::vector<classtime::Segment>
   }
 }
 
+void SettingsWindow::RefreshTimelineScopeLabel() {
+  timelineStatusText_.Text(planScope_.SelectedIndex() != 1
+                               ? L"显示常规模板时段；拖动调整会保存到模板。"
+                               : L"显示今天的计划；拖动调整只影响今天。");
+}
+
 void SettingsWindow::StartTimelineDrag(TimelineDragMode mode, const std::string& id,
                                        Input::PointerRoutedEventArgs const& args) {
   if (timelineDragMode_ != TimelineDragMode::None || editorOpen_) return;
@@ -3504,7 +3510,10 @@ void SettingsWindow::FinishTimelineDrag(bool commit) {
     return;
   }
   // 未移动时不重建点击目标，让双击仍能打开编辑器。
-  if (!changed) return;
+  if (!changed) {
+    RefreshTimelineScopeLabel();
+    return;
+  }
   // 取消时重绘恢复原位。
   const bool permanent = planScope_.SelectedIndex() != 1;
   RebuildTimelineBlocks(classtime::SortedByStart(EditorBaseSegments(permanent)));
