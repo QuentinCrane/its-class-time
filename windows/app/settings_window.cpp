@@ -32,6 +32,10 @@ constexpr wchar_t kVersion[] = L"0.1.2";
 using Presentation = classtime::PresentationSettings;
 constexpr double kPreviewWidth = 420;
 constexpr double kPreviewHeight = 172;
+using ClockStyle = classtime::NotificationSettings::AlertClockStyle;
+constexpr const wchar_t* kClockNames[] = {L"翻页数字", L"机械表盘", L"电子面板", L"罗马表盘"};
+constexpr int kClockScales[] = {75, 100, 125};
+constexpr int kClockHolds[] = {2, 4, 8};
 
 struct MonitorChoice {
   std::wstring device;
@@ -1895,7 +1899,7 @@ void SettingsWindow::Build() {
     dropClockToggle_ = ToggleSwitch();
     Add(visualStack, MakeToggleRow(
         dropClockToggle_, L"掉落 3D 放大时钟提醒",
-        L"到点时从屏幕顶部/边角掉落并放大 3D 立体时钟，不抢焦点、约 4 秒自动收回", L"\uE823"));
+        L"到点时从屏幕顶部/边角掉落并放大 3D 立体时钟，可调整大小和停留时间，悬停暂留、点击收回", L"\uE823"));
 
     Border visualPreviewFrame;
     visualPreviewFrame.CornerRadius(CornerRadius{10, 10, 10, 10});
@@ -1923,14 +1927,31 @@ void SettingsWindow::Build() {
     Add(dropClockOptionsPanel_, MakeDivider());
     Add(dropClockOptionsPanel_, MakeText(L"3D 时钟样式", 14));
     Add(dropClockOptionsPanel_, MakeSegments(
-        dropClockStyleSegments_, {L"3D 电子数字", L"3D 机械表盘"}, [this](int index) {
+        dropClockStyleSegments_, {kClockNames[0], kClockNames[1], kClockNames[2], kClockNames[3]},
+        [this](int index) {
           SelectSegment(dropClockStyleSegments_, index);
-          const auto style = index == 1
-                                 ? classtime::NotificationSettings::AlertClockStyle::Mechanical3D
-                                 : classtime::NotificationSettings::AlertClockStyle::Digital3D;
+          const auto style = static_cast<ClockStyle>(index);
           auto settings = Services::Instance().config().notifications;
           if (settings.dropClockStyle == style) return;
           settings.dropClockStyle = style;
+          Services::Instance().UpdateNotifications(settings);
+        }));
+    Add(dropClockOptionsPanel_, MakeText(L"时钟大小", 14));
+    Add(dropClockOptionsPanel_, MakeSegments(dropClockScaleSegments_, {L"75%", L"100%", L"125%"},
+        [this](int index) {
+          SelectSegment(dropClockScaleSegments_, index);
+          auto settings = Services::Instance().config().notifications;
+          if (settings.dropClockScalePercent == kClockScales[index]) return;
+          settings.dropClockScalePercent = kClockScales[index];
+          Services::Instance().UpdateNotifications(settings);
+        }));
+    Add(dropClockOptionsPanel_, MakeText(L"停留时间", 14));
+    Add(dropClockOptionsPanel_, MakeSegments(dropClockHoldSegments_, {L"2 秒", L"4 秒", L"8 秒"},
+        [this](int index) {
+          SelectSegment(dropClockHoldSegments_, index);
+          auto settings = Services::Instance().config().notifications;
+          if (settings.dropClockHoldSeconds == kClockHolds[index]) return;
+          settings.dropClockHoldSeconds = kClockHolds[index];
           Services::Instance().UpdateNotifications(settings);
         }));
     Add(dropClockOptionsPanel_, MakeText(L"掉落位置", 14));
@@ -4265,10 +4286,11 @@ void SettingsWindow::RefreshNotificationControls() {
   dropClockToggle_.IsOn(settings.dropClockAlert);
   dropClockOptionsPanel_.Visibility(settings.dropClockAlert ? Visibility::Visible
                                                             : Visibility::Collapsed);
-  SelectSegment(dropClockStyleSegments_,
-                settings.dropClockStyle ==
-                        classtime::NotificationSettings::AlertClockStyle::Mechanical3D
-                    ? 1 : 0);
+  SelectSegment(dropClockStyleSegments_, static_cast<int>(settings.dropClockStyle));
+  SelectSegment(dropClockScaleSegments_, static_cast<int>(
+      std::find(std::begin(kClockScales), std::end(kClockScales), settings.dropClockScalePercent) - kClockScales));
+  SelectSegment(dropClockHoldSegments_, static_cast<int>(
+      std::find(std::begin(kClockHolds), std::end(kClockHolds), settings.dropClockHoldSeconds) - kClockHolds));
   const int clockPosIndex =
       settings.dropClockPosition ==
               classtime::NotificationSettings::AlertClockPosition::TopRight
@@ -4431,10 +4453,11 @@ void SettingsWindow::RefreshVisualPreview() {
   const auto phaseAccent = WidgetAppearance::KindColor(palette, kind);
   const auto app = WidgetAppearance::ResolveClockAppearance(notify, phaseAccent);
 
+  Canvas layer = visualPreviewCanvas_;
   const auto place = [&](UIElement const& item, double x, double y) {
     Canvas::SetLeft(item, x);
     Canvas::SetTop(item, y);
-    visualPreviewCanvas_.Children().Append(item);
+    layer.Children().Append(item);
   };
   const auto rect = [&](double x, double y, double w, double h, Brush const& fill,
                         double radius = 0.0, Brush const& stroke = nullptr,
@@ -4514,13 +4537,22 @@ void SettingsWindow::RefreshVisualPreview() {
   if (notify.dropClockAlert) {
     using Pos = classtime::NotificationSettings::AlertClockPosition;
     using Style = classtime::NotificationSettings::AlertClockStyle;
-    const bool mech = notify.dropClockStyle == Style::Mechanical3D;
+    const bool mech = notify.IsDial(notify.dropClockStyle);
     const double cardW = mech ? 136.0 : 210.0;
     const double cardH = mech ? 150.0 : 124.0;
-    double cardX = scrX + (scrW - cardW) * 0.5;
-    if (notify.dropClockPosition == Pos::TopLeft) cardX = scrX + 20.0;
-    else if (notify.dropClockPosition == Pos::TopRight) cardX = scrX + scrW - cardW - 20.0;
-    const double cardY = mech ? scrY + 14.0 : scrY + 20.0;
+    // Draw in face-local coordinates, scaling the entire face including hands and glyphs.
+    const double scale = 0.84 * notify.dropClockScalePercent / 100.0;
+    Canvas face;
+    ScaleTransform zoom;
+    zoom.ScaleX(scale);
+    zoom.ScaleY(scale);
+    face.RenderTransform(zoom);
+    double left = scrX + (scrW - cardW * scale) / 2;
+    if (notify.dropClockPosition == Pos::TopLeft) left = scrX + 16;
+    if (notify.dropClockPosition == Pos::TopRight) left = scrX + scrW - cardW * scale - 16;
+    place(face, left, scrY + 12);
+    layer = face;
+    constexpr double cardX = 0, cardY = 0;
 
     if (!mech) {
       // 投影与底部 3D 侧壁厚边
@@ -4568,16 +4600,23 @@ void SettingsWindow::RefreshVisualPreview() {
       wchar_t hh[8]{}, mm[8]{};
       swprintf_s(hh, L"%02d", clockTime.hour);
       swprintf_s(mm, L"%02d", clockTime.minute);
-      drawTile(cardX + 18.0, hh);
-      drawTile(cardX + cardW - 18.0 - 76.0, mm);
+      if (notify.dropClockStyle == Style::Panel3D) {
+        rect(cardX + 18, cardY + 16, cardW - 36, 58, SolidColorBrush(app.tileBottom), 8,
+             SolidColorBrush(app.tileBorder), 1);
+        labelAt(std::wstring(hh) + L":" + mm, 33, app.digit, cardX + 18, cardY + 22,
+                cardW - 36, 50, TextAlignment::Center, true, L"Bahnschrift");
+      } else {
+        drawTile(cardX + 18.0, hh);
+        drawTile(cardX + cardW - 18.0 - 76.0, mm);
 
-      // 冒号双 LED
-      for (const double cy : {cardY + 36.0, cardY + 52.0}) {
-        Shapes::Ellipse dot;
-        dot.Width(5.5);
-        dot.Height(5.5);
-        dot.Fill(SolidColorBrush(app.accent));
-        place(dot, cardX + cardW * 0.5 - 2.75, cy);
+        // 冒号双 LED
+        for (const double cy : {cardY + 36.0, cardY + 52.0}) {
+          Shapes::Ellipse dot;
+          dot.Width(5.5);
+          dot.Height(5.5);
+          dot.Fill(SolidColorBrush(app.accent));
+          place(dot, cardX + cardW * 0.5 - 2.75, cy);
+        }
       }
 
       // 底部徽标与文字
@@ -4658,9 +4697,9 @@ void SettingsWindow::RefreshVisualPreview() {
         tick.Y2(cy + rOut * s);
         tick.Stroke(SolidColorBrush(i % 3 == 0 ? app.tickMajor : app.tickMinor));
         tick.StrokeThickness(i % 3 == 0 ? 1.8 : 1.0);
-        visualPreviewCanvas_.Children().Append(tick);
+        layer.Children().Append(tick);
       }
-      labelAt(L"12", 8.5, app.numeral, cx - 10.0, cy - faceR + 9.0, 20.0, 12.0,
+      labelAt(notify.dropClockStyle == Style::Roman3D ? L"XII" : L"12", 8.5, app.numeral, cx - 10.0, cy - faceR + 9.0, 20.0, 12.0,
               TextAlignment::Center, true, L"Bahnschrift");
       wchar_t smallTime[8]{};
       swprintf_s(smallTime, L"%02d:%02d", clockTime.hour, clockTime.minute);
@@ -4679,7 +4718,7 @@ void SettingsWindow::RefreshVisualPreview() {
         line.StrokeThickness(width);
         line.StrokeStartLineCap(PenLineCap::Round);
         line.StrokeEndLineCap(PenLineCap::Round);
-        visualPreviewCanvas_.Children().Append(line);
+        layer.Children().Append(line);
       };
       const double minDeg = clockTime.minute * 6.0 - 90.0;
       const double hourDeg = ((clockTime.hour % 12) + clockTime.minute / 60.0) * 30.0 - 90.0;
@@ -4709,11 +4748,13 @@ void SettingsWindow::RefreshVisualPreview() {
 
   if (visualPreviewCaption_) {
     std::wstring caption = L"实时效果预览：";
-    caption += notify.dropClockAlert
-                   ? (notify.dropClockStyle == classtime::NotificationSettings::AlertClockStyle::Mechanical3D
-                          ? L"3D 机械表盘"
-                          : L"3D 电子数字")
-                   : L"仅边缘闪光";
+    if (notify.dropClockAlert) {
+      caption += kClockNames[static_cast<int>(notify.dropClockStyle)];
+      caption += L" · " + std::to_wstring(notify.dropClockScalePercent) + L"% · " +
+                 std::to_wstring(notify.dropClockHoldSeconds) + L" 秒";
+    } else {
+      caption += notify.screenEdgeFlash ? L"仅边缘闪光" : L"视觉提醒已关闭";
+    }
     caption += L" · " + badge + L"（" + body + L"）";
     visualPreviewCaption_.Text(hstring(caption));
   }

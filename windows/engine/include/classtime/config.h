@@ -65,7 +65,7 @@ struct PresentationSettings {
 };
 
 struct NotificationSettings {
-  enum class AlertClockStyle { Digital3D, Mechanical3D };
+  enum class AlertClockStyle { Digital3D, Mechanical3D, Panel3D, Roman3D };
   enum class AlertClockPosition { TopCenter, TopRight, TopLeft };
   enum class AlertClockSkin { Graphite, Ivory, VintageGold, CyberNeon, RetroMatrix, OceanBlue };
 
@@ -79,6 +79,11 @@ struct NotificationSettings {
   bool dropClockAlert = false;
   AlertClockStyle dropClockStyle = AlertClockStyle::Digital3D;
   AlertClockPosition dropClockPosition = AlertClockPosition::TopCenter;
+  int dropClockScalePercent = 100;
+  int dropClockHoldSeconds = 4;
+  static bool IsDial(AlertClockStyle style) {
+    return style == AlertClockStyle::Mechanical3D || style == AlertClockStyle::Roman3D;
+  }
   AlertClockSkin dropClockSkin = AlertClockSkin::Graphite;
   // 视觉到点动效自定义颜色，"RRGGBB" 十六进制字符串；空表示跟随所选皮肤或当前时段。
   std::string screenEdgeFlashColor;

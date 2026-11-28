@@ -213,7 +213,7 @@ inline float RoundedRectSdfFast(float px, float py, float cx, float cy, float hw
 }
 
 inline float CardBodySdfFast(float px, float py, float width, float height, ClockStyle style) {
-  if (style == ClockStyle::Digital3D) {
+  if (!classtime::NotificationSettings::IsDial(style)) {
     return RoundedRectSdfFast(px, py, width * 0.5f, height * 0.5f, width * 0.5f, height * 0.5f,
                               22.0f);
   }
@@ -770,9 +770,9 @@ void VisualAlert::StartClock(const BoundaryAlert& alert, const RECT& area, doubl
 
   clockDpiScale_ = dpiScale;
   clockCardWidthDip_ =
-      clockStyle_ == ClockStyle::Digital3D ? kDigitalWidthDip : kMechanicalWidthDip;
+      !notify.IsDial(clockStyle_) ? kDigitalWidthDip : kMechanicalWidthDip;
   clockCardHeightDip_ =
-      clockStyle_ == ClockStyle::Digital3D ? kDigitalHeightDip : kMechanicalHeightDip;
+      !notify.IsDial(clockStyle_) ? kDigitalHeightDip : kMechanicalHeightDip;
 
   // 先在目标显示器创建无尺寸弹窗以获得该显示器的精确 DPI。
   clockHwnd_ = CreateWindowExW(
@@ -784,6 +784,8 @@ void VisualAlert::StartClock(const BoundaryAlert& alert, const RECT& area, doubl
     clockDpiScale_ = static_cast<double>(winDpi) / 96.0;
   }
 
+  clockDpiScale_ *= notify.dropClockScalePercent / 100.0;
+  clockHoldDuration_ = std::chrono::seconds(notify.dropClockHoldSeconds);
   const int cardPxW = static_cast<int>(std::lround(clockCardWidthDip_ * clockDpiScale_));
   const int cardPxH = static_cast<int>(std::lround(clockCardHeightDip_ * clockDpiScale_));
   if (!EnsureClockResources(cardPxW, cardPxH, clockDpiScale_)) {
@@ -833,7 +835,7 @@ void VisualAlert::RenderClockFrame(double rotXDeg, double rotYDeg, double scale,
   const bool needRedrawFace =
       clockFaceDirty_ ||
       (clockStyle_ == ClockStyle::Digital3D && std::fabs(flipProgress - lastRenderedFlip_) > 1e-4) ||
-      (clockStyle_ == ClockStyle::Mechanical3D &&
+      (classtime::NotificationSettings::IsDial(clockStyle_) &&
        std::fabs(sweepProgress - lastRenderedSweep_) > 1e-4);
 
   if (needRedrawFace) {
@@ -845,7 +847,7 @@ void VisualAlert::RenderClockFrame(double rotXDeg, double rotYDeg, double scale,
     d2dTarget_->BeginDraw();
     d2dTarget_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
-    if (clockStyle_ == ClockStyle::Digital3D) {
+    if (!classtime::NotificationSettings::IsDial(clockStyle_)) {
       const float w = static_cast<float>(kDigitalWidthDip);
       const float h = static_cast<float>(kDigitalHeightDip);
       D2D1_GRADIENT_STOP bodyStops[] = {
@@ -902,16 +904,24 @@ void VisualAlert::RenderClockFrame(double rotXDeg, double rotYDeg, double scale,
       swprintf_s(newMin, L"%02d", curMinutes % 60);
       const double hourFlip = std::wcscmp(oldHour, newHour) == 0 ? 1.0 : flipProgress;
 
-      DrawFlipTile(d2dTarget_.get(), fmtDigitalDigits_.get(), 26.0f, 22.0f, 108.0f, 84.0f, oldHour,
-                   newHour, hourFlip, theme);
-      DrawFlipTile(d2dTarget_.get(), fmtDigitalDigits_.get(), 166.0f, 22.0f, 108.0f, 84.0f, oldMin,
-                   newMin, flipProgress, theme);
-
-      if (accentSolid) {
-        d2dTarget_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(150.0f, 52.0f), 4.0f, 4.0f),
-                                accentSolid.get());
-        d2dTarget_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(150.0f, 76.0f), 4.0f, 4.0f),
-                                accentSolid.get());
+      if (clockStyle_ == ClockStyle::Panel3D) {
+        winrt::com_ptr<ID2D1SolidColorBrush> face;
+        d2dTarget_->CreateSolidColorBrush(theme.tileBottom, face.put());
+        const auto panel = D2D1::RoundedRect(D2D1::RectF(24, 22, w - 24, 106), 10, 10);
+        if (face) d2dTarget_->FillRoundedRectangle(panel, face.get());
+        if (rimBrush) d2dTarget_->DrawRoundedRectangle(panel, rimBrush.get(), 1.2f);
+        DrawWithFormat(d2dTarget_.get(), fmtDigitalDigits_.get(),
+                       std::wstring(newHour) + L":" + newMin, panel.rect, theme.digit);
+      } else {
+        DrawFlipTile(d2dTarget_.get(), fmtDigitalDigits_.get(), 26, 22, 108, 84, oldHour,
+                     newHour, hourFlip, theme);
+        DrawFlipTile(d2dTarget_.get(), fmtDigitalDigits_.get(), 166, 22, 108, 84, oldMin,
+                     newMin, flipProgress, theme);
+        if (accentSolid) {
+          for (float y : {52.0f, 76.0f}) {
+            d2dTarget_->FillEllipse(D2D1::Ellipse({150, y}, 4, 4), accentSolid.get());
+          }
+        }
       }
 
       if (!clockAlert_.stageBadge.empty()) {
@@ -1009,10 +1019,10 @@ void VisualAlert::RenderClockFrame(double rotXDeg, double rotYDeg, double scale,
         float x;
         float y;
       } numerals[] = {
-          {L"12", cx - 14.0f, cy - dialR + 17.0f},
-          {L"3", cx + dialR - 34.0f, cy - 10.0f},
-          {L"6", cx - 14.0f, cy + dialR - 36.0f},
-          {L"9", cx - dialR + 14.0f, cy - 10.0f},
+          {clockStyle_ == ClockStyle::Roman3D ? L"XII" : L"12", cx - 14.0f, cy - dialR + 17.0f},
+          {clockStyle_ == ClockStyle::Roman3D ? L"III" : L"3", cx + dialR - 34.0f, cy - 10.0f},
+          {clockStyle_ == ClockStyle::Roman3D ? L"VI" : L"6", cx - 14.0f, cy + dialR - 36.0f},
+          {clockStyle_ == ClockStyle::Roman3D ? L"IX" : L"9", cx - dialR + 14.0f, cy - 10.0f},
       };
       for (const auto& num : numerals) {
         DrawWithFormat(d2dTarget_.get(), fmtMechNumeral_.get(), num.text,
@@ -1306,7 +1316,7 @@ void VisualAlert::TickClock() {
     clockPhaseStart_ = now;
     if (!clockHovered_) {
       clockHoldElapsed_ += dt;
-      if (clockHoldElapsed_ >= std::chrono::milliseconds(3600)) {
+      if (clockHoldElapsed_ >= clockHoldDuration_) {
         StopClock();
         return;
       }
@@ -1340,8 +1350,7 @@ void VisualAlert::TickClock() {
     }
   } else if (clockPhase_ == ClockPhase::Hold) {
     if (!clockHovered_) {
-      const double stepMs = std::min(elapsedMs, 80.0);
-      clockHoldElapsed_ += std::chrono::milliseconds(static_cast<long long>(std::lround(stepMs)));
+      clockHoldElapsed_ += now - clockPhaseStart_;
     }
     clockPhaseStart_ = now;
     const double totalHoldMs =
@@ -1353,7 +1362,7 @@ void VisualAlert::TickClock() {
     retractStartRotY_ = rotY;
     retractStartScale_ = scale;
     retractStartDropDip_ = dropDip;
-    if (!clockHovered_ && clockHoldElapsed_ >= std::chrono::milliseconds(3400)) {
+    if (!clockHovered_ && clockHoldElapsed_ >= clockHoldDuration_) {
       BeginClockRetract();
       return;
     }

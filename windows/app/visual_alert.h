@@ -88,6 +88,7 @@ class VisualAlert {
   std::chrono::steady_clock::time_point clockPhaseStart_{};
   enum class ClockPhase { Idle, Intro, Hold, Retract };
   ClockPhase clockPhase_ = ClockPhase::Idle;
+  std::chrono::seconds clockHoldDuration_{4};
   bool clockAnimated_ = true;
   bool clockHovered_ = false;
   bool clockTrackingMouse_ = false;

@@ -250,6 +250,8 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch dropClockToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel dropClockOptionsPanel_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid dropClockStyleSegments_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid dropClockScaleSegments_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid dropClockHoldSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid dropClockPositionSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid dropClockSkinGrid_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Canvas visualPreviewCanvas_{nullptr};

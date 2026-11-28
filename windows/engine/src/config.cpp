@@ -106,13 +106,21 @@ PresentationSettings::Edge EdgeFromString(const std::string& text) {
 }
 
 const char* AlertClockStyleToString(NotificationSettings::AlertClockStyle style) {
-  return style == NotificationSettings::AlertClockStyle::Mechanical3D ? "mechanical_3d"
-                                                                       : "digital_3d";
+  using Style = NotificationSettings::AlertClockStyle;
+  switch (style) {
+    case Style::Mechanical3D: return "mechanical_3d";
+    case Style::Panel3D: return "panel_3d";
+    case Style::Roman3D: return "roman_3d";
+    default: return "digital_3d";
+  }
 }
 
 NotificationSettings::AlertClockStyle AlertClockStyleFromString(const std::string& text) {
-  return text == "mechanical_3d" ? NotificationSettings::AlertClockStyle::Mechanical3D
-                                 : NotificationSettings::AlertClockStyle::Digital3D;
+  using Style = NotificationSettings::AlertClockStyle;
+  if (text == "mechanical_3d") return Style::Mechanical3D;
+  if (text == "panel_3d") return Style::Panel3D;
+  if (text == "roman_3d") return Style::Roman3D;
+  return Style::Digital3D;
 }
 
 const char* AlertClockPositionToString(NotificationSettings::AlertClockPosition position) {
@@ -380,6 +388,14 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
     if (const json::Value* value = notifications->Find("dropClockStyle")) {
       config.notifications.dropClockStyle = AlertClockStyleFromString(value->AsString());
     }
+    if (const auto* scale = notifications->Find("dropClockScalePercent")) {
+      const double value = scale->AsNumber(100);
+      if (value == 75 || value == 125) config.notifications.dropClockScalePercent = static_cast<int>(value);
+    }
+    if (const auto* hold = notifications->Find("dropClockHoldSeconds")) {
+      const double value = hold->AsNumber(4);
+      if (value == 2 || value == 8) config.notifications.dropClockHoldSeconds = static_cast<int>(value);
+    }
     if (const json::Value* value = notifications->Find("dropClockPosition")) {
       config.notifications.dropClockPosition = AlertClockPositionFromString(value->AsString());
     }
@@ -477,6 +493,8 @@ std::string SerializeConfig(const AppConfig& config) {
   notifications.Set("lunchBoundaries", json::Value::MakeBool(config.notifications.lunchBoundaries));
   notifications.Set("screenEdgeFlash", json::Value::MakeBool(config.notifications.screenEdgeFlash));
   notifications.Set("dropClockAlert", json::Value::MakeBool(config.notifications.dropClockAlert));
+  notifications.Set("dropClockScalePercent", json::Value::MakeNumber(config.notifications.dropClockScalePercent));
+  notifications.Set("dropClockHoldSeconds", json::Value::MakeNumber(config.notifications.dropClockHoldSeconds));
   notifications.Set("dropClockStyle", json::Value::MakeString(
       AlertClockStyleToString(config.notifications.dropClockStyle)));
   notifications.Set("dropClockPosition", json::Value::MakeString(

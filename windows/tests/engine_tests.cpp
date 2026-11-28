@@ -482,6 +482,28 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
             legacy->notifications.dropClockPosition ==
                 classtime::NotificationSettings::AlertClockPosition::TopCenter,
         "旧配置默认关闭视觉到点动效并使用 3D 数字顶部居中");
+  using Style = classtime::NotificationSettings::AlertClockStyle;
+  Check(legacy && legacy->notifications.dropClockScalePercent == 100 &&
+            legacy->notifications.dropClockHoldSeconds == 4, "旧配置保持标准大小和停留时间");
+  for (const auto style : {Style::Panel3D, Style::Roman3D}) {
+    for (const int scale : {75, 100, 125}) {
+      for (const int hold : {2, 4, 8}) {
+        auto custom = config;
+        custom.notifications.dropClockStyle = style;
+        custom.notifications.dropClockScalePercent = scale;
+        custom.notifications.dropClockHoldSeconds = hold;
+        const auto restored = classtime::ParseConfig(classtime::SerializeConfig(custom), &error);
+        Check(restored && restored->notifications.dropClockStyle == style &&
+                  restored->notifications.dropClockScalePercent == scale &&
+                  restored->notifications.dropClockHoldSeconds == hold, "表盘、大小与时长配置往返");
+      }
+    }
+  }
+  const auto invalidClock = classtime::ParseConfig(
+      "{\"templates\":[" + classtime::SerializeSchedule(highSchool, 0) +
+      R"(],"notifications":{"dropClockScalePercent":999,"dropClockHoldSeconds":-1}})", &error);
+  Check(invalidClock && invalidClock->notifications.dropClockScalePercent == 100 &&
+            invalidClock->notifications.dropClockHoldSeconds == 4, "无效时钟大小和时长恢复默认");
   const auto invalidVisualNotify = classtime::ParseConfig(
       "{\"templates\":[" + classtime::SerializeSchedule(highSchool, 0) +
           "],\"notifications\":{\"dropClockStyle\":\"unknown\",\"dropClockPosition\":\"bottom\"}}",
