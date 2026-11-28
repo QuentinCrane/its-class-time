@@ -44,11 +44,15 @@ void DesktopApp::OnLaunched(LaunchActivatedEventArgs const&) {
   const auto instance =
       Microsoft::Windows::AppLifecycle::AppInstance::FindOrRegisterForKey(L"ClassTime");
   if (!instance.IsCurrent()) {
-    auto redirect = instance.RedirectActivationToAsync(
-        Microsoft::Windows::AppLifecycle::AppInstance::GetCurrent().GetActivatedEventArgs());
-    redirect.Completed([dispatcher = dispatcher_](auto const&, auto) {
-      dispatcher.TryEnqueue([] { Application::Current().Exit(); });
-    });
+    try {
+      auto redirect = instance.RedirectActivationToAsync(
+          Microsoft::Windows::AppLifecycle::AppInstance::GetCurrent().GetActivatedEventArgs());
+      redirect.Completed([dispatcher = dispatcher_](auto const&, auto) {
+        dispatcher.TryEnqueue([] { Application::Current().Exit(); });
+      });
+    } catch (const winrt::hresult_error&) {
+      Application::Current().Exit();
+    }
     return;
   }
 
