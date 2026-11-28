@@ -2,246 +2,107 @@
 
 # It's Class Time!
 
-**“上课”时间到！** · 把课表的节奏，放回桌面上。
+**“上课”时间到！**
 
-常驻屏幕边缘的原生小组件 · 分节进度 · 悬停详情 · 到点系统通知 · 完全离线
+把一天的作息放到桌面边缘。抬眼就能看到现在是第几节、还剩多久、下一段何时开始。
 
-![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0b6cbf?style=flat-square)
-![技术](https://img.shields.io/badge/native-C%2B%2B%2FWinRT%20%C2%B7%20SwiftUI-444444?style=flat-square)
-![发行](https://img.shields.io/github/v/release/QuentinCrane/its-class-time?style=flat-square)
-![依赖](https://img.shields.io/badge/cloud%20%2F%20account-none-2e8b57?style=flat-square)
-
-[它能做什么](#它能做什么) · [为什么做](#为什么做这个) · [装上试试](#装上试试) · [现在到哪一步](#现在到哪一步) · [文档地图](#文档地图) · [路线图](#路线图)
+[下载与安装](#下载与安装) · [桌面与课表](#桌面与课表) · [版本与进度](#版本与进度) · [开发文档](#开发文档)
 
 </div>
 
-![It's Class Time! 桌面课表与时间进度示意](assets/branding/readme-cover.png)
+![It's Class Time! 封面，展示 Windows 作息计划与桌面圆环](assets/branding/readme-cover.png)
 
-> 上图为产品宣传插画，实际界面请见下方截图。系统通知由操作系统绘制。
+It's Class Time! 是 Windows 和 macOS 的原生桌面作息组件。选一份高中或大学模板，也可以排出自己的工作、学习和休息时段。课表跟随本地时钟运行，上课、下课和休息切换时可接收系统通知。课表和设置保存在本机，应用可离线使用。
 
-## 它能做什么
+## 下载与安装
 
-**It's Class Time!** 把你熟悉的上课铃声搬到桌面上。它不问你今天要完成什么，也不催你打卡，只做一件事：**让你随时知道现在是第几节、这一节走到哪儿了、还有多久能站起来走两步。**
+当前发行版为 **v0.1.2**。下载页提供安装包和 SHA-256 校验值。 [GitHub Releases](https://github.com/QuentinCrane/its-class-time/releases/latest)
 
-时间线来自一张真实的课表——高中 45 分钟一节，或者大学 90 分钟一大课，中间有课间、有午休。它按本地时钟自己走，到点用系统通知提醒你上下课。
+| 平台 | 下载 | 系统要求 |
+| --- | --- | --- |
+| Windows x64 | [离线安装程序（EXE）](https://github.com/QuentinCrane/its-class-time/releases/download/v0.1.2/ItsClassTime-0.1.2-Windows-x64-Setup.exe) | Windows 10 1809 或更新版本 |
+| macOS Apple Silicon | [离线安装镜像（DMG）](https://github.com/QuentinCrane/its-class-time/releases/download/v0.1.2/ItsClassTime-0.1.2-macOS-arm64.dmg) | macOS 13 或更新版本 |
 
-它**不是**番茄钟：没有“开始专注”按钮，没有 25 分钟倒计时，也不需要你每天手动开一轮。
+- **Windows** 双击 EXE，选择安装位置和桌面快捷方式。安装包随附 Windows App Runtime，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\ClassTime`。该安装包未签名，SmartScreen 可能显示提示。
+- **macOS** 打开 DMG，将 `ItsClassTime.app` 拖入「应用程序」。macOS 26 起可使用原生 Liquid Glass。应用采用 Ad-hoc 签名，Apple 公证待完成。首次打开时，可按系统提示前往「系统设置 → 隐私与安全性」确认。
 
-不上学也能用。把模板改成你自己的节奏——上午两段深度工作、午休、下午一段长会——它本质上就是一张可编辑的时间表，只是默认长得像课表。
+打开设置，在「作息计划」选择模板并编辑时段，再到「显示与位置」选一种桌面视图。关闭设置后，可从 Windows 托盘或 macOS 菜单栏打开设置、切换视图、显示或隐藏组件、暂停或恢复提醒。
 
-## 为什么做这个
+## 桌面与课表
 
-写代码、写论文、改方案的时候，人对时间的感知会失真。抬头看一眼钟，你只知道“现在三点二十”，但真正想知道的是“这节还剩多久”“下一段休息什么时候来”。
+### 看进度
 
-常见做法是设一串闹钟，或者用番茄钟把一天切成等长的小块。可真实的课表不是等长的，午休也不是五分钟。闹钟设多了会麻木，设少了会错过；番茄钟则要求你不停地开始、结束、开始。
+| 视图 | 显示内容 |
+| --- | --- |
+| **分节长条** | 已结束的课节填满，当前课节随时间推进。课间与午休单独标记，悬停可查看起止时间、进度和下一时段。 |
+| **圆环** | 中心显示当前时段的剩余时间。选「全天」可同时查看已完成课节数。 |
+| **屏幕边框** | 沿 Windows 工作区或 macOS 屏幕四边显示进度。全天可按时段分色，也可让进度颜色跟随当前时段。 |
 
-所以我们做了个很窄的东西：把课表本身放到屏幕边缘，让它安静地走。你不需要打开它，也不需要维护它——抬头就有答案。
+在「显示与位置」可切换「当前时段」和「全天」，选择显示器并查看实时预览。长条和圆环支持四边吸附、贴边收起及三击归中。侧边的长条会自动竖排。
 
-## 你会看到什么
+### 排作息
 
-### 一眼读懂时间
+- **常规模板与仅今天**各自保存。可自定义重复星期，也可从现有模板复制或新建空白模板。
+- **时间轴**支持拖动时段及两端，步进可选 1、5、15 分钟。调整后可查看周课表和日课表。
+- **精确到分钟**。可编辑起止时间、输入整数分钟，或用滑块按 5 分钟调整时长。需要改动后续时段时，可选择顺延或保持原时间。时间冲突会标出对应时段。
 
-- **分节长条**：每一节一根小条。上过的填满，正在上的按比例生长，没到的留白；课间是一小段不同颜色的间隔，午休是明显更长的分隔，不会被误画成一节课。
-- **圆环**：一个主环，中心是剩余时间。只想知道“还剩多久”的时候用它。
-- **屏幕边框**：沿显示器四边画一整圈进度，几乎不占地方（macOS 贴合整块屏幕四边且点击完全穿透，Windows 沿工作区四边避让任务栏）。全天可按各时段的时长分色，也可选择让进度颜色跟随当前是上课、课间还是午休。
-- **Windows 显示细节**：可自定义阶段颜色、边框渐变与进度前沿高光，并选择全屏时隐藏或覆盖任务栏。
-- **当前时段 / 全天**：屏幕小就只看这一段；想掌握整天节奏就全铺开。这只是展示过滤，提醒永远基于完整日程。
+### 接收提醒
 
-### 悬停才说话
+常驻应用在作息边界调用系统通知，同一时刻的下课和课间开始合成一条。暂停提醒时进度照常更新。恢复提醒或从睡眠唤醒后，应用从当前时刻定位下一条提醒。
 
-鼠标停上去，才展开课程名、第几节、起止时间、已过与剩余、百分比、下一段预告。不悬停时保持最窄，不闪、不跳、不抢焦点。四条边都能吸附：上下保持横排，左右自动转成竖向排列。多屏时可在「显示与位置」选择组件所在的显示器，或跟随系统主显示器。默认紧贴任务栏或屏幕边缘，靠边一侧以小圆角接续；想要悬浮感可以关掉「紧贴边缘」。拖歪了？连续点三下它，沿当前边回到居中。
+Windows 的视觉提醒可在作息切换时显示边缘柔光或放大时钟。时钟支持选择样式、位置和配色。双端都可以在设置中开启登录启动。
 
-### 改得动的课表
+## 版本与进度
 
-- 高中 / 大学两份模板只是起点，全部可改：改名、改起止、增删时段、调午休，还能按星期启用，并可新增复制或空白的自定义模板。
-- **数字框精确到 1 分钟，滑块按 5 分钟微调。** 手输 121 分钟不会被滑块悄悄改成 120。
-- **作息时间轴**：拖动时段或两端调整时间，可选 1、5、15 分钟步进；也可复制时段并在空白处双击新增。
-- **「仅今天」和「永久修改」分开放。** 临时调课不会污染常规模板；改模板也不会偷偷改掉今天。
-- 改时长会影响到后面的课时，你可以选「顺延后续」或「后续保持原时间」；冲突就拦下来，并明确指出是哪一行。
-- 分节长条可调整整体长度和背景色，也可恢复默认长度与系统/液态玻璃背景。
+### v0.1.2 之后的 Windows 更新
 
-### 靠得住的提醒
+- **设置侧栏**提供作息计划、时间轴、课表预览、模板管理、显示与位置、组件外观、通知、视觉提醒和常规九个入口。作息相关页面共用计划范围，显示与外观页面共用顶部实时预览。
+- **作息计划**支持周一至周五、周末、每天三个快捷项，也可逐日点选。点击时段列表里的起止时间可用 24 小时滚轮或键盘调整。
+- **视觉提醒**新增电子面板和罗马表盘，可分别设置时钟大小与停留时间。离线 EXE 支持登录启动，通知页在返回应用时刷新系统权限状态。
 
-- 由**常驻进程在边界到达时**调用系统通知，而不是提前把一整天的事件排进系统队列。
-- 睡眠两小时再唤醒，只显示当下的状态，不会补发一串过期提醒。
-- 同一下课瞬间的“下课了”和“课间开始”合并成一条，不刷屏。
-- 一键暂停提醒：时间照走、进度照动，只是不响；恢复后不补发暂停期间的旧提醒。
-- **Windows 可选视觉提醒**：到点时可显示边缘柔光或短暂的放大时钟。时钟可选翻页数字、机械、电子面板或罗马表盘，支持六款皮肤、自选颜色、三档大小和停留时间。两种提醒默认关闭；它们是系统通知之外的补充。
+### Windows 实机截图
 
-### 安静地待着
+![Windows 作息计划页，显示九项设置导航、重复星期和示例课表](assets/screenshots/windows-schedule-settings.png)
 
-- 关掉设置窗口不等于退出，托盘 / 菜单栏一直在；从这里可以显示隐藏、切换视图、暂停提醒、退出。
-- 单实例运行，不会出现两个进程各发一套通知。
-- 换显示器、改缩放后，浮窗会回到仍然可见的工作区域。
-- 开机启动是可选项，默认关闭，不会悄悄写启动项。
-- 完全离线，配置就是一个本地 JSON。文件损坏时备份原件并回退到预设，而不是打不开。
+*在作息计划页选择模板、勾选重复星期，或点击起止时间编辑时段。*
 
-> 上面写的是设计行为。其中睡眠唤醒、资源管理器重启和显示器热插拔等场景仍在逐项复核，状态以 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) 为准——我们不把“代码写完”当成“验证通过”。
+![Windows 桌面圆环，显示本节剩余时间与今日已完成节数](assets/screenshots/windows-ring.png)
 
-## 两个平台，两套原生
+*圆环在全天范围内同时显示当前时段剩余时间与今日已完成节数。*
 
-这个项目有一个不太流行的坚持：**不用 Electron、Tauri 或 WebView 做桌面壳。**
-
-|  | Windows 11 | macOS |
-|---|---|---|
-| 语言与框架 | C++17 · C++/WinRT · WinUI 3 · Win32 | Swift · SwiftUI · AppKit |
-| 常驻入口 | 托盘（`Shell_NotifyIcon`） | 菜单栏（`NSStatusItem`） |
-| 悬浮窗 | WinUI 3 窗口 + `HWND_TOPMOST` + `WS_EX_NOACTIVATE` | `NSPanel`（浮动层级、不激活） |
-| 通知 | `AppNotificationManager.Show` | `UNUserNotificationCenter`（`trigger: nil`） |
-| 配置 | 本地 JSON，原子写入 | 本地 JSON，原子写入 |
-
-一个仓库、两个独立工程。共享的只有 JSON Schema、预设和测试向量——不为了“代码复用”塞一个跨语言核心库或 IPC 服务进来。取舍写在 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [docs/DECISIONS.md](docs/DECISIONS.md)。
-
-## 现在到哪一步
-
-当前处于 **0.1.x 持续迭代阶段**。下表记录 main 分支。Windows 的电子面板、罗马表盘、时钟大小与停留时间，以及登录启动和通知修复均在 v0.1.2 发布后加入。
-
-| 部分 | 状态 |
-|---|---|
-| 作息时间引擎、编辑与冲突规则 | **双端通过共享测试向量与配置/时间轴/组件状态检查**（Windows 270 项、macOS 220 项，0 失败） |
-| Windows 客户端 | 可构建、可安装、可常驻；长条 / 圆环 / 屏幕边框、设置窗口、托盘、悬停详情、拖动吸附已在实机核对 |
-| Windows 系统通知 | 升级后的 Windows 安装版已在组件隐藏时核对到点合并消息，暂停和恢复投递通过；已实测关闭与恢复系统通知权限，勿扰场景待复核 |
-| Windows 安装包 | 离线 EXE 可用；安装路径、快捷方式、覆盖安装、卸载保留课表已验证；**未签名** |
-| macOS 客户端 | SwiftUI + AppKit 原生工程，支持 macOS 26+ Liquid Glass；配置恢复与单实例已通过冒烟验证，桌面交互与通知实弹**待逐项复核**。新增视觉提醒和部分外观选项目前为 Windows 专属 |
-| macOS 安装镜像 | `ItsClassTime.app` 与离线 `arm64.dmg` 可本地构建并完成本机 Ad-hoc 签名校验；**未公证**，拖拽安装待实测 |
-| CI 与双端 Release | Windows 与 macOS 安装包通过构建工作流生成，发行包及校验值见 [Releases](https://github.com/QuentinCrane/its-class-time/releases) |
-
-> 时间语义的每一条规则都能在 [docs/FRD.md](docs/FRD.md) 找到出处，验证记录在 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
-
-### 界面实机截图（Windows）
-
-![Windows 圆环视图](assets/screenshots/windows-ring.png)
-
-*圆环视图：中心是本节剩余时间，底部是今日已完成的节数。*
-
-![Windows 作息计划设置](assets/screenshots/windows-schedule-settings.png)
-
-*作息计划设置。可在同一页选重复星期、点开起止时间调整时段。*
-
-## 装上试试
-
-### Windows
-
-1. 到 [Releases](https://github.com/QuentinCrane/its-class-time/releases/latest) 下载 `ItsClassTime-<版本>-Windows-x64-Setup.exe`。
-2. 双击安装，选择安装路径，可选创建桌面快捷方式。默认装到 `%LOCALAPPDATA%\Programs\ClassTime`，仅当前用户，并创建开始菜单项。
-3. 首次启动选择高中或大学模板，再按你的真实课表改。
-4. 关掉设置窗口。它会留在托盘里继续计时。
-
-几点需要提前说明：
-
-- 系统要求 Windows 10 1809（x64）及以上，主要面向 Windows 11。
-- **安装包没有代码签名**，SmartScreen 可能拦一下；介意的话请从源码构建。
-- 在没装 Windows App Runtime 的干净机器上，首次部署流程仍待验证。
-- 卸载后个人课表保留在 `%LOCALAPPDATA%\ClassTime`，重装可继续用。
-
-### macOS
-
-1. 到 [Releases](https://github.com/QuentinCrane/its-class-time/releases/latest) 下载 `ItsClassTime-<版本>-macOS-arm64.dmg`，适用于 Apple Silicon Mac。
-2. 双击镜像，将 `ItsClassTime.app` 拖入「应用程序（Applications）」文件夹后打开。
-3. 首次启动在设置窗口挑选或新建作息模板，调整显示形态与通知权限。
-4. 关掉设置窗口，它会留在顶部菜单栏继续计时（左键展开液态玻璃控制面板，右键打开快捷菜单）。
-
-几点需要提前说明：
-
-- 系统要求 macOS 13 Ventura 及以上（macOS 26/27 自动启用原生 Liquid Glass 外观与无障碍适配）。
-- **镜像中的应用使用 Ad-hoc 签名，尚未公证（Notarization）**，从网络下载首次打开可能需在「系统设置 → 隐私与安全性」放行。
-- 个人课表与设置保存在 `~/Library/Application Support/ClassTime`，升级或移除 `.app` 均不会删除课表。
+Windows 已实测三种视图、托盘键盘入口、系统通知权限切换与覆盖安装。macOS v0.1.2 已通过构建、签名校验和配置恢复冒烟测试。实机结果和待测项目见 [验收记录](docs/ACCEPTANCE.md) 与 [路线图](docs/ROADMAP.md)。
 
 ## 从源码构建
 
-**Windows**（C++/WinRT + WinUI 3，不需要 MSBuild 也能构建）：
-
-```cmd
-cd windows
-tools\build-unpackaged.cmd
-:: 产物：build\app\ClassTimeApp.exe
-```
-
-打离线安装包（需要 Inno Setup 7）：
+**Windows** 使用 C++/WinRT、WinUI 3 和 Win32。还原 NuGet 依赖并生成投影头文件后，在仓库根目录运行以下命令。 [Windows 构建指南](windows/README.md)
 
 ```powershell
+.\windows\tools\build-unpackaged.cmd
+# 构建离线安装包，需要 Inno Setup 7
 .\windows\tools\build-installer.ps1
 ```
 
-完整的环境要求、依赖版本、已知限制和手工验收清单见 [windows/README.md](windows/README.md)。
-
-**macOS**（Swift + SwiftUI + AppKit；构建需要 macOS 27 SDK，可使用对应的 Command Line Tools 或 Xcode；运行最低支持 macOS 13）：
+**macOS** 使用 SwiftUI 和 AppKit。构建需要提供 macOS 27 SDK 的 Command Line Tools 或 Xcode。 [macOS 构建指南](macos/README.md)
 
 ```bash
-# 构建原生应用包（产物：macos/build/app/ItsClassTime.app）
 ./macos/tools/build-app.sh
-
-# 打离线安装镜像（产物：macos/build/release/ItsClassTime-<版本>-macOS-arm64.dmg）
 ./macos/tools/build-dmg.sh
 ```
 
-完整的构建说明、工具链兼容细节与手工验收清单见 [macos/README.md](macos/README.md)。
+两个原生工程分别位于 `windows/` 和 `macos/`，共用 `shared/` 下的 JSON Schema、预设与时间引擎测试向量。
 
-两端都必须读取 `shared/presets/` 的预设，并跑通 `shared/test-cases/` 的同一组测试向量——时间规则不允许“各写各的”。
+## 开发文档
 
-仓库结构：
+| 文档 | 内容 |
+| --- | --- |
+| [产品需求](docs/PRD.md) · [功能规格](docs/FRD.md) | 使用场景、作息编辑、时间计算与提醒规则 |
+| [设计规范](docs/DESIGN.md) · [架构](docs/ARCHITECTURE.md) · [决策](docs/DECISIONS.md) | 桌面交互、设置结构和双端原生实现 |
+| [开发与发行](docs/DEVELOPMENT.md) · [官方资料](docs/REFERENCES.md) | 本地构建、运行测试、打包和发布流程 |
+| [路线图](docs/ROADMAP.md) · [验收记录](docs/ACCEPTANCE.md) | 阶段目标、实机记录和复测步骤 |
+| [作息 Schema](shared/schemas/schedule.schema.json) · [内置模板](shared/presets) · [共享测试向量](shared/test-cases/time-engine.json) | 双端约定与样例 |
 
-```text
-It'sClassTime/
-├── windows/     # C++/WinRT 工程、作息引擎、测试、构建与打包脚本
-├── macos/       # SwiftUI + AppKit 工程、作息引擎、测试、.app 与 .dmg 打包脚本
-├── shared/      # 双端共用的 JSON Schema、预设、测试向量
-├── docs/        # 产品、功能、设计、架构、验收文档
-├── assets/      # 原型图与实机截图
-└── AGENTS.md    # 给 AI 编码助手的硬约束
-```
-
-> 工程与配置标识（Windows：`ClassTime.sln`、`ClassTimeApp.exe`；macOS：`ItsClassTime.app`；配置目录均为 `ClassTime`）保持稳定，界面与文档中的产品名统一为 **It's Class Time!**（中文 **“上课”时间到！**）。
-
-## 文档地图
-
-| 文档 | 回答什么问题 |
-|---|---|
-| [docs/PRD.md](docs/PRD.md) | 为谁做、先做什么、明确不做什么 |
-| [docs/FRD.md](docs/FRD.md) | 时间怎么算、边界怎么判、编辑与通知的确定性规则（可直接照着写代码） |
-| [docs/DESIGN.md](docs/DESIGN.md) | 长什么样、悬浮层怎么交互、无障碍与系统视觉边界 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 两端各用哪些原生 API、为什么不做跨平台核心 |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 本地怎么建工程、怎么发版、哪些步骤不能省 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 现在做到哪、下一个检查点是什么 |
-| [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) | 怎么手工验收、双端一致性凭什么算通过 |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | 哪些已经冻结、哪些要等实测再定 |
-| [docs/REFERENCES.md](docs/REFERENCES.md) | 用到的 Apple / Microsoft / GitHub 官方文档 |
-| [AGENTS.md](AGENTS.md) | 给 AI 编码助手（也给人）的硬约束 |
-| [windows/README.md](windows/README.md) | Windows 端的构建、验证边界与实现映射 |
-| [macos/README.md](macos/README.md) | macOS 端的构建、打包与手工验收指南 |
-| [shared/schemas/schedule.schema.json](shared/schemas/schedule.schema.json) | 作息 JSON 的结构契约 |
-| [shared/presets/](shared/presets) | 高中 / 大学可编辑初始模板 |
-| [shared/test-cases/time-engine.json](shared/test-cases/time-engine.json) | 双端共用的时间引擎测试向量 |
-
-## 我们坚持不做的
-
-产品边界也是产品的一部分。以下这些不是“以后再说”，而是明确不做：
-
-- 不做账号、云同步、团队协作、数据看板。你的课表只在本机。
-- 不做 AI 建议、待办管理、日历同步、打卡统计。
-- 不提前把整天的通知排给系统，也不自己绘制伪系统通知。
-- 不用 WebView / 浏览器内核当 UI，不为跨平台牺牲原生体验。
-- 不用 1 秒一轮的后台忙轮询驱动作息，也不拿 UI 帧循环当计时器。
-- 不承诺“零内存占用”。资源开销要测出来再说，测量记录写进验收清单。
-
-## 路线图
-
-| 阶段 | 目标 | 状态 |
-|---|---|---|
-| M0 | 原生技术可行性：常驻、浮窗、即时通知 | 双端主体已构建；Windows 浮窗与系统通知中心投递已核对；macOS 冒烟通过，桌面通知待复核 |
-| M1 | 作息引擎：预设、校验、进度、下一边界 | 双端引擎检查通过（Windows 270 项、macOS 220 项）；常驻进程真实休眠唤醒待验 |
-| M2 | 可日常使用的 MVP：三种视图、时间轴、双层编辑、暂停、开机启动 | 双端核心功能可用；Windows 另有部分外观与视觉提醒选项，桌面交互和通知实弹仍在复核 |
-| M3 | 稳定性与发布：多显示器、单实例、CI、双端 Release | 提供双端离线安装包及构建工作流；签名公证与部分实机验收待完成 |
-
-后续功能池（自定义铃声、更多主题、跨设备同步）不在首版范围内，需要单独立项。详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
-
-## 参与
-
-- 如果这个东西正好解决了你的问题，点个 Star 就是最直接的鼓励；用着不顺手，欢迎开 Issue 说说卡在哪。
-- 发现问题是好事：请开 Issue，并写清系统版本、显示缩放、课表形态和复现步骤。截图比描述有用。
-- 提 PR 前请先读 [AGENTS.md](AGENTS.md)。改时间规则时必须同时更新 `shared/test-cases/time-engine.json`，否则两端会悄悄分叉。
-- 建议标签：`windows`、`macos`、`shared-spec`、`bug`、`design`、`release`。一个需求可以拆成两个平台的子任务。
+欢迎用 [Issue](https://github.com/QuentinCrane/its-class-time/issues) 反馈使用问题，附上系统版本、显示缩放、视图和复现步骤。提交改动前请阅读 [协作说明](AGENTS.md)。修改时间规则时同步更新共享测试向量。
 
 ## 许可证
 
-本仓库目前**尚未附带开源许可证**。引用需求文档与设计图时请注明出处。
+许可证待补充。

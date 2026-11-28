@@ -1,6 +1,6 @@
 # REFERENCES｜官方开发资料
 
-> 检索核对时间：2026-11-21，2026-11-22 补充纯代码 WinUI 与打包工具条目。下列链接以官方技术文档为准；SDK 新旧可能变化，实际开始工程时需重新看对应目标版本的 API 兼容性。不是所有官网示例都直接适用于最终项目打包类型。
+> 平台 API 与构建资料索引。项目使用的版本见双端构建指南。Windows 托盘键盘入口与通知权限资料更新于 2026-11-28。
 
 ## Apple
 
@@ -22,7 +22,7 @@
 ## Microsoft
 
 1. [Get started with C++/WinRT](https://learn.microsoft.com/en-us/windows/apps/develop/cpp-winrt/get-started) — C++/WinRT 基础。
-2. [WinUI 3 C++ project templates](https://learn.microsoft.com/en-us/windows/apps/winui/winui3/winui-project-templates-in-visual-studio) — 先确认**C++ 模板**而不是 C#。
+2. WinUI 3 的 C++ 桌面项目模板。 [WinUI 3 C++ project templates](https://learn.microsoft.com/en-us/windows/apps/winui/winui3/winui-project-templates-in-visual-studio)
 3. [Windows App SDK / WinUI](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/) — Windows 原生 SDK 主入口。
 4. [App notifications quickstart (C++)](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/notifications/app-notifications/app-notifications-quickstart?tabs=cpp) — 即时发送/响应系统通知。
 5. [AppNotificationManager.Show](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.windows.appnotifications.appnotificationmanager.show) — Windows App SDK 即时通知。
@@ -35,14 +35,16 @@
 12. [ScrollViewer.ChangeView](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.controls.scrollviewer.changeview?view=windows-app-sdk-1.6) — 时间轴首次定位；2026-11-25 核对 Windows App SDK 1.6 支持该接口。
 13. [FlyoutBase.ShouldConstrainToRootBounds](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.controls.primitives.flyoutbase.shouldconstraintorootbounds?view=windows-app-sdk-1.6) — 托盘菜单可延伸至锚点窗口之外；Windows App SDK 1.4 起支持，项目使用 1.6。
 14. [GradientStop](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.media.gradientstop?view=windows-app-sdk-1.6) — WinUI 预览使用渐变色标表达边框的平滑颜色过渡。
+15. 托盘用 `NOTIFYICON_VERSION_4` 接收键盘选中和菜单事件。 [Shell_NotifyIconW](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw)
+16. Windows 在投递通知前查询应用的系统通知权限。 [AppNotificationManager.Setting](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.windows.appnotifications.appnotificationmanager.setting?view=windows-app-sdk-1.8)
 
 ## GitHub
 
 1. [GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) — macOS/Windows 构建环境。
 2. [GitHub Releases documentation](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases) — 单个 Release 下的双平台产物。
 
-## 重要边界
+## 系统行为
 
-- 原生通知由操作系统最终呈现，用户权限/勿扰模式可能不展示横幅；不能把概念原型中的通知卡片当成必须复现的 UI。
-- macOS 全屏 Spaces 与 Windows 独占全屏并不承诺覆盖所有场景；不应依赖私有 API。
-- `AppNotificationManager.Show` 是**立即通知**，不是 OS 定时排程；本项目通知时点由**当前运行的本机 App**判断。
+- 操作系统按照通知权限与勿扰模式呈现横幅。
+- 浮窗层级遵循平台的窗口规则，包括 macOS 全屏 Spaces 与 Windows 独占全屏。
+- 本机常驻应用计算下一作息边界，到点调用系统即时通知。
