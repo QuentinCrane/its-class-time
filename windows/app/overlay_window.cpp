@@ -21,19 +21,13 @@ namespace ClassTimeApp {
 namespace {
 
 using View = classtime::PresentationSettings::View;
+using WidgetStyle = classtime::WidgetStyle;
 
 // 长条沿贴边方向的整体长度可由用户指定；默认保留原有的横、竖尺寸。
-constexpr double kBarHeightDip = 32.0;
-constexpr double kSideBarThicknessDip = 34.0;
-constexpr double kBarHostThicknessDip = 24.0;
-constexpr double kRingDiameterDip = 156.0;
 constexpr double kBarInsetDip = 17;
 constexpr double kSurfaceStrokeDip = 1;
 constexpr Thickness kSurfaceBorder{kSurfaceStrokeDip, kSurfaceStrokeDip,
                                    kSurfaceStrokeDip, kSurfaceStrokeDip};
-constexpr float kRingCenter = kRingDiameterDip / 2;
-constexpr float kRingRadius = kRingCenter - 13;
-constexpr double kRingStroke = 6.5;
 constexpr double kDetailWidth = 280.0;
 constexpr double kDetailTrackWidth = 194.0;
 constexpr int kSnapInsetDip = 12;
@@ -203,12 +197,50 @@ void ApplyStripHighlight(uint32_t* pixels, SIZE size, bool horizontal, bool reve
   }
 }
 
-bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool reverse,
+void MaskScreenEdgeBands(uint32_t* pixels, const SIZE& size, const RECT& bounds, const RECT& frame,
+                         int thickness, WidgetStyle::ScreenEdgeStyle style) {
+  const auto rect = [](const RECT& r) {
+    return ScreenEdgeRect{static_cast<double>(r.left), static_cast<double>(r.top),
+                          static_cast<double>(r.right - r.left),
+                          static_cast<double>(r.bottom - r.top)};
+  };
+  const auto frameRect = rect(frame);
+  const auto stripRect = rect(bounds);
+  for (const auto& band : ScreenEdgeBands(style)) {
+    if (band.opacity == 1) continue;
+    const auto start = std::lround(band.start * thickness);
+    const auto end = std::lround(band.end * thickness);
+    if (end <= start) continue;
+    const auto opacity = static_cast<uint32_t>(std::lround(band.opacity * 255));
+    for (const auto& part : ScreenEdgeBandRects(frameRect, start, end)) {
+      const auto clip = IntersectScreenEdgeRects(part, stripRect);
+      if (clip.width <= 0 || clip.height <= 0) continue;
+      const int x = static_cast<int>(clip.x - stripRect.x);
+      const int y = static_cast<int>(clip.y - stripRect.y);
+      const int width = static_cast<int>(clip.width), height = static_cast<int>(clip.height);
+      for (int row = 0; row < height; ++row) {
+        auto* begin = pixels + (y + row) * size.cx + x;
+        if (opacity == 0) {
+          std::fill_n(begin, width, 0U);
+          continue;
+        }
+        for (int i = 0; i < width; ++i) {
+          auto& pixel = begin[i];
+          const uint32_t rb = ((pixel & 0x00ff00ff) * opacity >> 8) & 0x00ff00ff;
+          const uint32_t ag = (((pixel >> 8) & 0x00ff00ff) * opacity) & 0xff00ff00;
+          pixel = rb | ag;
+        }
+      }
+    }
+  }
+}
+
+bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, const RECT& frame, bool horizontal, bool reverse,
                      int filledPixels, uint32_t fill, uint32_t track,
                      const std::vector<uint32_t>& timeline,
                      bool highlightEnabled, int highlightHead, int highlightSideStart,
                      int highlightPerimeter, int highlightThickness, double highlightPhase,
-                     int alpha = 255) {
+                     WidgetStyle::ScreenEdgeStyle style, int alpha) {
   SIZE size{bounds.right - bounds.left, bounds.bottom - bounds.top};
   BITMAPINFO info{};
   info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -259,6 +291,10 @@ bool RenderEdgeStrip(HWND hwnd, const RECT& bounds, bool horizontal, bool revers
       ApplyStripHighlight(static_cast<uint32_t*>(bitmapData), size, horizontal, reverse,
                           highlightEnabled, highlightHead, highlightSideStart,
                           highlightPerimeter, highlightThickness, highlightPhase);
+      if (style != WidgetStyle::ScreenEdgeStyle::Solid) {
+        MaskScreenEdgeBands(static_cast<uint32_t*>(bitmapData), size, bounds, frame,
+                            horizontal ? size.cy : size.cx, style);
+      }
       POINT origin{};
       POINT position{bounds.left, bounds.top};
       // SourceConstantAlpha 与逐像素透明度相乘：淡入淡出只需重提交，不必改像素。
@@ -408,97 +444,25 @@ void OverlayWindow::BuildBar() {
   segmentPanel_.VerticalAlignment(VerticalAlignment::Center);
   barRoot_.Child(segmentPanel_);
   root_.Children().Append(barRoot_);
-  barSurfaceSignature_.clear();
-  ApplyBarSurface();
+  ApplyBarSurface(palette);
 }
 
-void OverlayWindow::ApplyBarSurface() {
-  if (!barRoot_) return;
-  const Palette palette = ResolvePalette(Services::Instance().config().presentation);
-  Windows::UI::Color color = palette.background;
-  if (!barBackgroundHex_.empty()) color = WidgetAppearance::ParseHexColor(barBackgroundHex_);
-  // 系统背景色或自定义色变化（含深浅色切换）时才重建画刷。
-  const std::string signature = barBackgroundHex_ + ":" + std::to_string(color.R) + "," +
-                                std::to_string(color.G) + "," + std::to_string(color.B);
-  if (barSurfaceSignature_ == signature) return;
-  barSurfaceSignature_ = signature;
-  barRoot_.Background(WidgetAppearance::Surface(color));
-  if (barBackgroundHex_.empty()) {
-    barRoot_.BorderBrush(SolidColorBrush(WithAlpha(palette.foreground, 26)));
-  } else {
-    const bool dark = 299 * color.R + 587 * color.G + 114 * color.B < 128000;
-    const auto foreground = dark ? Windows::UI::ColorHelper::FromArgb(255, 255, 255, 255)
-                                 : Windows::UI::ColorHelper::FromArgb(255, 0, 0, 0);
-    barRoot_.BorderBrush(SolidColorBrush(WithAlpha(foreground, 55)));
+void OverlayWindow::ApplyBarSurface(const Palette& palette) {
+  const auto surface = WidgetAppearance::SurfaceColor(palette, style_.colors.barBackground);
+  const auto ink = WidgetAppearance::SurfaceInk(palette, surface, style_.colors.inkColor);
+  if (barSurface_ != surface) {
+    barSurface_ = surface;
+    barRoot_.Background(WidgetAppearance::Surface(surface));
+  }
+  if (barInk_ != ink || !barPalette_ || barPalette_->highContrast != palette.highContrast) {
+    barInk_ = ink;
+    barRoot_.BorderBrush(SolidColorBrush(WithAlpha(ink, palette.highContrast ? 255 : 50)));
   }
 }
 
 void OverlayWindow::BuildRing() {
-  const auto palette = ResolvePalette(Services::Instance().config().presentation);
-  auto dial = Canvas();
-  dial.Width(kRingDiameterDip);
-  dial.Height(kRingDiameterDip);
-  dial.Background(WidgetAppearance::Surface(palette.background));
-
-  Shapes::Ellipse bezel;
-  bezel.Width(kRingDiameterDip - 7);
-  bezel.Height(kRingDiameterDip - 7);
-  bezel.Stroke(SolidColorBrush(WithAlpha(palette.foreground, 25)));
-  bezel.StrokeThickness(kSurfaceStrokeDip);
-  Canvas::SetLeft(bezel, 3.5);
-  Canvas::SetTop(bezel, 3.5);
-  dial.Children().Append(bezel);
-
-  EllipseGeometry circle;
-  circle.Center({kRingCenter, kRingCenter});
-  circle.RadiusX(kRingRadius);
-  circle.RadiusY(kRingRadius);
-  Shapes::Path track;
-  track.Data(circle);
-  track.Stroke(SolidColorBrush(WithAlpha(palette.foreground, 24)));
-  track.StrokeThickness(kRingStroke);
-  dial.Children().Append(track);
-
-  PathGeometry progress;
-  PathFigure figure;
-  figure.StartPoint({kRingCenter, kRingCenter - kRingRadius});
-  ringSweep_ = ArcSegment();
-  ringSweep_.Size({kRingRadius, kRingRadius});
-  ringSweep_.SweepDirection(SweepDirection::Clockwise);
-  ringSweep_.Point(figure.StartPoint());
-  figure.Segments().Append(ringSweep_);
-  progress.Figures().Append(figure);
-  ringArc_ = Shapes::Path();
-  ringAccent_ = SolidColorBrush(palette.accent);
-  ringArc_.Data(progress);
-  ringArc_.Stroke(ringAccent_);
-  ringArc_.StrokeThickness(kRingStroke);
-  ringArc_.StrokeStartLineCap(PenLineCap::Round);
-  ringArc_.StrokeEndLineCap(PenLineCap::Round);
-  ringArc_.Visibility(Visibility::Collapsed);
-  dial.Children().Append(ringArc_);
-
-  // 读数固定在盘面中央，切换范围时只改变下方文字。
-  const auto placeReadout = [&](const TextBlock& text, double top) {
-    text.Width(kRingDiameterDip);
-    text.TextAlignment(TextAlignment::Center);
-    Canvas::SetTop(text, top);
-    dial.Children().Append(text);
-  };
-  const auto secondary = WithAlpha(palette.foreground, 180);
-  ringLabel_ = MakeText(12, secondary);
-  ringTime_ = MakeText(32, palette.foreground, true);
-  ringTime_.FontFamily(FontFamily(L"Bahnschrift"));
-  ringSummary_ = MakeText(11, secondary);
-  placeReadout(ringLabel_, 43);
-  placeReadout(ringTime_, 58);
-  placeReadout(ringSummary_, 100);
-
-  Viewbox face;
-  face.Stretch(Stretch::Uniform);
-  face.Child(dial);
   ringRoot_ = Grid();
-  ringRoot_.Children().Append(face);
+  ringRoot_.Children().Append(ringFace_.Element());
   ringRoot_.PointerMoved([this](auto const&, auto const&) {
     if (!ringDetailId_.empty()) ShowDetail(ringRoot_, ringDetailId_);
   });
@@ -844,9 +808,12 @@ void OverlayWindow::CenterOverlay() {
   if (presentation.offsetX == 0 && presentation.offsetY == 0) return;
   presentation.offsetX = 0;
   presentation.offsetY = 0;
+  if (!services.UpdatePresentation(presentation)) {
+    QueueEdgeCollapse();
+    return;
+  }
   offsetX_ = 0;
   offsetY_ = 0;
-  services.UpdatePresentation(presentation);
 
   RECT bounds{};
   MONITORINFO info{sizeof(info)};
@@ -937,20 +904,29 @@ void OverlayWindow::FinishDrag(bool savePosition) {
 
   auto& services = Services::Instance();
   auto presentation = services.config().presentation;
-  edge_ = presentation.edge = targetEdge;
-  monitorId_ = presentation.monitorId = ToUtf8(info.szDevice);
+  presentation.edge = targetEdge;
+  presentation.monitorId = ToUtf8(info.szDevice);
   // 横向贴边用 offsetX 记水平位置，纵向贴边用 offsetY 记垂直位置；
   // 另一轴归零，切回原来的方向时仍然居中。
   if (nowSide) {
-    offsetX_ = presentation.offsetX = 0;
-    offsetY_ = presentation.offsetY =
+    presentation.offsetX = 0;
+    presentation.offsetY =
         static_cast<int>(std::lround((oldCenterY - workCenterY) / dpiScale_));
   } else {
-    offsetY_ = presentation.offsetY = 0;
-    offsetX_ = presentation.offsetX =
+    presentation.offsetY = 0;
+    presentation.offsetX =
         static_cast<int>(std::lround((oldCenterX - workCenterX) / dpiScale_));
   }
-  services.UpdatePresentation(presentation);
+  if (!services.UpdatePresentation(presentation)) {
+    LayoutWindow();
+    ApplyState();
+    QueueEdgeCollapse();
+    return;
+  }
+  edge_ = presentation.edge;
+  monitorId_ = presentation.monitorId;
+  offsetX_ = presentation.offsetX;
+  offsetY_ = presentation.offsetY;
 
   // 横排改竖排（或跨屏/缩放变化）时同步更新样式、尺寸、圆角区域与分节排列。
   if (wasSide != nowSide || movedMonitor) {
@@ -1317,9 +1293,14 @@ void OverlayWindow::ApplyPresentation() {
   const bool edgeChanged = presentation.edge != edge_;
   const bool offsetChanged = presentation.offsetX != offsetX_ || presentation.offsetY != offsetY_;
   const bool monitorChanged = presentation.monitorId != monitorId_;
-  const bool barLengthChanged = presentation.barLengthDip != barLengthDip_;
+  const auto& style = presentation.style;
+  const bool barSizeChanged = presentation.view == View::Bar &&
+      (style.barLengthDip != style_.barLengthDip || style.barThicknessDip != style_.barThicknessDip ||
+       style.barCornerDip != style_.barCornerDip);
+  const bool ringSizeChanged = presentation.view == View::Ring &&
+      (style.ringDiameterDip != style_.ringDiameterDip || style.ringStyle != style_.ringStyle);
   const bool layoutChanged = viewChanged || monitorChanged || edgeChanged || offsetChanged ||
-                             flushChanged || coverTaskbarChanged || barLengthChanged;
+                             flushChanged || coverTaskbarChanged || barSizeChanged || ringSizeChanged;
   const bool orientationChanged = IsSideEdge(edge_) != IsSideEdge(presentation.edge);
 
   view_ = presentation.view;
@@ -1331,9 +1312,8 @@ void OverlayWindow::ApplyPresentation() {
   flushWithEdge_ = presentation.flushWithEdge;
   hideInFullscreen_ = presentation.hideInFullscreen;
   coverTaskbar_ = presentation.coverTaskbar;
-  barLengthDip_ = presentation.barLengthDip;
-  barBackgroundHex_ = presentation.barBackground;
-  ApplyBarSurface();
+  if (!(style == style_)) visualSignature_.clear();
+  style_ = style;
 
   autoHideAtEdge_ = presentation.autoHideAtEdge;
   UpdateFullscreenSuppression();
@@ -1485,6 +1465,7 @@ RECT OverlayWindow::ComputeLayoutRect() {
   MONITORINFO info{sizeof(info)};
   if (!GetMonitorInfoW(monitor, &info)) return {};
   const RECT work = TargetBounds(info);
+  layoutWorkArea_ = work;
   if (MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) != monitor) {
     SetWindowPos(hwnd_, nullptr, work.left, work.top, 0, 0,
                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -1499,16 +1480,13 @@ RECT OverlayWindow::ComputeLayoutRect() {
   const int workHeight = work.bottom - work.top;
 
   // 长条整体长度可自定义：横向控制宽度，竖向（左右贴边）控制高度并受工作区约束。
-  const int barLength = barLengthDip_ != classtime::PresentationSettings::kDefaultBarLength
-                            ? barLengthDip_
-                            : side ? classtime::PresentationSettings::kDefaultVerticalBarLength
-                                   : classtime::PresentationSettings::kDefaultHorizontalBarLength;
+  const int barLength = style_.EffectiveBarLength(side);
   double widthDip = barLength;
-  double heightDip = kBarHeightDip;
+  double heightDip = style_.EffectiveBarThickness(side);
   if (ring) {
-    widthDip = heightDip = kRingDiameterDip;
+    widthDip = heightDip = style_.ringDiameterDip;
   } else if (side) {
-    widthDip = kSideBarThicknessDip;
+    widthDip = style_.EffectiveBarThickness(side);
     const double available = std::max(80.0, workHeight / dpiScale_ - 2.0 * kSnapInsetDip);
     heightDip = std::min(static_cast<double>(barLength), available);
   }
@@ -1560,8 +1538,9 @@ void OverlayWindow::ApplyLayoutStyle() {
                         : Thickness{kBarInsetDip, 0, kBarInsetDip, 0});
   edgeTrack_.Width(side ? kHandleTrackThicknessDip : kHandleTrackLengthDip);
   edgeTrack_.Height(side ? kHandleTrackLengthDip : kHandleTrackThicknessDip);
-  const double radius = (side ? kSideBarThicknessDip : kBarHeightDip) / 2;
-  barRoot_.CornerRadius(WidgetAppearance::DockCorners(radius, edge_, flushWithEdge_));
+  const double radius = style_.EffectiveBarCorner(side);
+  barRoot_.CornerRadius(WidgetAppearance::DockCorners(
+      radius, edge_, flushWithEdge_, std::min(4.0, radius)));
 }
 
 void OverlayWindow::UpdateWindowShape() {
@@ -1578,12 +1557,18 @@ void OverlayWindow::UpdateWindowShape() {
   const double scale = GetDpiForWindow(hwnd_) / 96.0;
   RECT bounds{0, 0, width, height};
   std::array<int, 4> radii{};
+  const bool circle = layer == Layer::Ring && style_.ringStyle != WidgetStyle::RingStyle::RoundedSquare;
   if (layer == Layer::Ring) {
     const int inset = std::min<int>(diameter / 8, std::lround(2.0 * scale));
     bounds.left = (width - diameter) / 2 + inset;
     bounds.top = (height - diameter) / 2 + inset;
     bounds.right = bounds.left + diameter - 2 * inset;
     bounds.bottom = bounds.top + diameter - 2 * inset;
+    if (!circle) {
+      const int radius = std::lround(diameter * WidgetAppearance::kSquareRingCorner /
+                                     WidgetAppearance::kRingFaceSize);
+      radii.fill(radius);
+    }
   } else {
     const auto corners = layer == Layer::Handle ? edgeHandle_.CornerRadius() : barRoot_.CornerRadius();
     const auto pixelRadius = [&](double dip) {
@@ -1592,15 +1577,16 @@ void OverlayWindow::UpdateWindowShape() {
     radii = {pixelRadius(corners.TopLeft), pixelRadius(corners.TopRight),
              pixelRadius(corners.BottomRight), pixelRadius(corners.BottomLeft)};
   }
-  if (layer == windowRegionLayer_ && EqualRect(&bounds, &windowRegionBounds_) &&
-      radii == windowRegionRadii_) return;
+  if (layer == windowRegionLayer_ && circle == windowRegionCircle_ &&
+      EqualRect(&bounds, &windowRegionBounds_) && radii == windowRegionRadii_) return;
 
-  HRGN region = layer == Layer::Ring
+  HRGN region = circle
                     ? CreateEllipticRgnIndirect(&bounds)
                     : RoundedWindowRegion(bounds, radii);
   if (!region) return;
   if (SetWindowRgn(hwnd_, region, IsWindowVisible(hwnd_))) {
     windowRegionLayer_ = layer;
+    windowRegionCircle_ = circle;
     windowRegionBounds_ = bounds;
     windowRegionRadii_ = radii;
   } else {
@@ -1683,7 +1669,9 @@ void OverlayWindow::ApplyState() {
     RECT intersection{};
     if (target && GetMonitorInfoW(target, &info) && GetWindowRect(hwnd_, &bounds)) {
       const RECT area = TargetBounds(info);
+      const UINT dpi = GetDpiForWindow(hwnd_);
       if (MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) != target ||
+          !EqualRect(&area, &layoutWorkArea_) || (dpi != 0 && dpi / 96.0 != dpiScale_) ||
           !IntersectRect(&intersection, &bounds, &area)) {
         HideDetail();
         LayoutWindow();
@@ -1710,9 +1698,24 @@ void OverlayWindow::RefreshEdgeHandle() {
   const auto plan = Services::Instance().PlanFor(now);
   const auto snapshot = classtime::Evaluate(plan.segments, now);
   const double filled = snapshot.current ? kHandleTrackLengthDip * snapshot.progress : 0.0;
+  const auto& presentation = Services::Instance().config().presentation;
+  const auto palette = ResolvePalette(presentation);
+  const auto& colors = presentation.style.colors;
+  const auto surface = WidgetAppearance::SurfaceColor(
+      palette, view_ == View::Ring ? colors.ringBackground : colors.barBackground);
+  const auto ink = WidgetAppearance::SurfaceInk(palette, surface, colors.inkColor);
+  const auto updateBrush = [](const Border& border, const DependencyProperty& property,
+                              Windows::UI::Color color) {
+    if (const auto brush = border.GetValue(property).try_as<SolidColorBrush>()) {
+      if (brush.Color() != color) brush.Color(color);
+    }
+  };
+  updateBrush(edgeHandle_, Border::BackgroundProperty(), surface);
+  updateBrush(edgeHandle_, Border::BorderBrushProperty(), WithAlpha(ink, palette.highContrast ? 255 : 40));
+  updateBrush(edgeTrack_, Border::BackgroundProperty(), WidgetAppearance::TrackColor(palette, ink, 55));
   if (snapshot.current) {
-    edgeFillBrush_.Color(KindColor(
-        ResolvePalette(Services::Instance().config().presentation), snapshot.current->kind));
+    const auto fill = KindColor(palette, snapshot.current->kind);
+    if (edgeFillBrush_.Color() != fill) edgeFillBrush_.Color(fill);
   }
   const bool side = IsSideEdge(edge_);
   edgeFill_.Width(side ? kHandleTrackThicknessDip : filled);
@@ -1734,10 +1737,9 @@ void OverlayWindow::RefreshScreenEdge() {
     HideScreenEdge();
     return;
   }
-  const RECT work = TargetBounds(info);
-  const int width = work.right - work.left;
-  const int height = work.bottom - work.top;
-  if (std::min(width, height) < 3) {
+  RECT work = TargetBounds(info);
+  const int shortSide = std::min(work.right - work.left, work.bottom - work.top);
+  if (shortSide < 3) {
     HideScreenEdge();
     return;
   }
@@ -1747,8 +1749,14 @@ void OverlayWindow::RefreshScreenEdge() {
   }
   const auto& services = Services::Instance();
   const auto& presentation = services.config().presentation;
+  const auto& style = presentation.style;
+  const double dpi = GetDpiForWindow(hwnd_) / 96.0;
+  const int inset = std::min<int>(std::lround(style.screenEdgeInsetDip * dpi), shortSide / 4);
+  InflateRect(&work, -inset, -inset);
+  const int width = work.right - work.left;
+  const int height = work.bottom - work.top;
   const int thickness = std::clamp<int>(
-      std::lround(presentation.screenEdgeThickness * GetDpiForWindow(hwnd_) / 96.0),
+      std::lround(style.screenEdgeThickness * dpi),
       1, std::min(width, height) / 3);
 
   // 左上角出发：上、右、下、左。每个像素只属于一个窗口，半透明转角不会重叠。
@@ -1787,10 +1795,9 @@ void OverlayWindow::RefreshScreenEdge() {
     }
   }
   const auto fill = PremultipliedBgra(accent);
-  const auto track = PremultipliedBgra(Windows::UI::ColorHelper::FromArgb(172, 100, 117, 137));
+  const auto track = PremultipliedBgra(WidgetAppearance::EdgeTrackColor(palette));
   std::array<std::vector<uint32_t>, 4> timelines;
-  if (allDay_ && presentation.screenEdgeColors ==
-                     classtime::PresentationSettings::ScreenEdgeColors::Schedule) {
+  if (allDay_ && style.screenEdgeColors == WidgetStyle::ScreenEdgeColors::Schedule) {
     const auto runs = BuildScreenEdgeRuns(plan.segments, now);
     if (!runs.empty()) {
       for (size_t i = 0; i < timelines.size(); ++i) timelines[i].assign(lengths[i], track);
@@ -1804,7 +1811,7 @@ void OverlayWindow::RefreshScreenEdge() {
         const auto color = WidgetAppearance::ScreenEdgeRunColor(palette, run.kind, run.elapsed);
         std::fill(timeline.begin() + begin, timeline.begin() + end, PremultipliedBgra(color));
       }
-      if (presentation.screenEdgeGradient) {
+      if (style.screenEdgeGradient && !palette.highContrast) {
         // 仅在颜色交界处采样渐变，转角两侧沿同一条时间线连续过渡。
         const auto stops = WidgetAppearance::ScreenEdgeColorStops(runs, palette);
         int sideStart = 0;
@@ -1827,13 +1834,15 @@ void OverlayWindow::RefreshScreenEdge() {
     }
   }
   const bool showHighlight =
-      presentation.screenEdgeHighlight && !plan.segments.empty() &&
+      style.screenEdgeHighlight && !palette.highContrast && !plan.segments.empty() &&
       progress > 0.0001 && progress < 0.9999;
   const bool animateHighlight = showHighlight && Motion::Enabled();
   const double phase = animateHighlight ? CurrentHighlightPhase() : 0.65;
   highlightPhase_ = phase;
   const int highlightHead = showHighlight ? static_cast<int>(std::lround(progress * perimeter)) : -1;
   const int alpha = stripAlpha_;
+  const bool frameChanged = !EqualRect(&work, &screenEdgeFrame_);
+  screenEdgeFrame_ = work;
   int remaining = static_cast<int>(std::lround(progress * perimeter));
   int sideStart = 0;
   for (size_t i = 0; i < screenEdgeStrips_.size(); ++i) {
@@ -1852,12 +1861,13 @@ void OverlayWindow::RefreshScreenEdge() {
     sideStart += lengths[i];
     if (pixels == strip.filledPixels && fill == strip.fill && track == strip.track &&
         timelines[i] == strip.timeline && strip.highlight == highlight &&
-        alpha == strip.alpha && EqualRect(&bounds[i], &strip.bounds)) continue;
-    if (!strip.hwnd || !RenderEdgeStrip(strip.hwnd, bounds[i], i % 2 == 0, i >= 2,
+        style.screenEdgeStyle == strip.style && alpha == strip.alpha && !frameChanged &&
+        EqualRect(&bounds[i], &strip.bounds)) continue;
+    if (!strip.hwnd || !RenderEdgeStrip(strip.hwnd, bounds[i], screenEdgeFrame_, i % 2 == 0, i >= 2,
                                         pixels, fill, track, timelines[i],
                                         highlight.enabled, highlight.headPixel,
                                         highlight.sideStart, highlight.perimeter,
-                                        highlight.thickness, highlight.phase, alpha)) {
+                                        highlight.thickness, highlight.phase, style.screenEdgeStyle, alpha)) {
       HideScreenEdge();
       return;
     }
@@ -1867,6 +1877,7 @@ void OverlayWindow::RefreshScreenEdge() {
     strip.track = track;
     strip.timeline = std::move(timelines[i]);
     strip.highlight = highlight;
+    strip.style = style.screenEdgeStyle;
     strip.alpha = alpha;
     if (!IsWindowVisible(strip.hwnd)) ShowWindow(strip.hwnd, SW_SHOWNOACTIVATE);
   }
@@ -1887,11 +1898,12 @@ void OverlayWindow::RenderStrips(int alpha) {
   for (size_t i = 0; i < screenEdgeStrips_.size(); ++i) {
     auto& strip = screenEdgeStrips_[i];
     if (!strip.hwnd || strip.filledPixels < 0 || alpha == strip.alpha) continue;
-    if (RenderEdgeStrip(strip.hwnd, strip.bounds, i % 2 == 0, i >= 2, strip.filledPixels,
+    if (RenderEdgeStrip(strip.hwnd, strip.bounds, screenEdgeFrame_, i % 2 == 0, i >= 2,
+                        strip.filledPixels,
                         strip.fill, strip.track, strip.timeline,
                         strip.highlight.enabled, strip.highlight.headPixel,
                         strip.highlight.sideStart, strip.highlight.perimeter,
-                        strip.highlight.thickness, strip.highlight.phase, alpha)) {
+                        strip.highlight.thickness, strip.highlight.phase, strip.style, alpha)) {
       strip.alpha = alpha;
     }
   }
@@ -1947,11 +1959,12 @@ void OverlayWindow::TickScreenEdgeHighlight() {
     // 只重绘真正与流光/高光区间相交的边（通常仅 1 条），避免无谓重绘其余三边。
     if (hlEnd <= sideBegin || hlBegin >= sideEnd) continue;
     strip.highlight.phase = highlightPhase_;
-    RenderEdgeStrip(strip.hwnd, strip.bounds, horizontal, i >= 2, strip.filledPixels,
+    RenderEdgeStrip(strip.hwnd, strip.bounds, screenEdgeFrame_, horizontal, i >= 2,
+                    strip.filledPixels,
                     strip.fill, strip.track, strip.timeline,
                     strip.highlight.enabled, strip.highlight.headPixel,
                     strip.highlight.sideStart, strip.highlight.perimeter,
-                    strip.highlight.thickness, strip.highlight.phase, strip.alpha);
+                    strip.highlight.thickness, strip.highlight.phase, strip.style, strip.alpha);
   }
 }
 
@@ -1962,15 +1975,12 @@ void OverlayWindow::RefreshBar() {
   const auto state = BuildWidgetState(plan.segments, now, services.config().presentation.scope);
   const auto& snapshot = state.snapshot;
   const auto& presentation = services.config().presentation;
-  Palette palette = ResolvePalette(presentation);
-  if (!barBackgroundHex_.empty()) {
-    const auto background = WidgetAppearance::ParseHexColor(barBackgroundHex_);
-    const bool dark = 299 * background.R + 587 * background.G + 114 * background.B < 128000;
-    palette.foreground = dark ? Windows::UI::ColorHelper::FromArgb(255, 255, 255, 255)
-                              : Windows::UI::ColorHelper::FromArgb(255, 0, 0, 0);
+  const auto palette = ResolvePalette(presentation);
+  ApplyBarSurface(palette);
+  if (!barPalette_ || !(*barPalette_ == palette)) {
+    barPalette_ = palette;
+    visualSignature_.clear();
   }
-  // 深浅色切换或自定义背景色变化时刷新长条表面。
-  ApplyBarSurface();
 
   RECT client{};
   if (!GetClientRect(hwnd_, &client)) return;
@@ -1979,9 +1989,7 @@ void OverlayWindow::RefreshBar() {
   const bool vertical = IsSideEdge(edge_);
   const auto& visible = state.visibleSegments;
   std::string signature = std::string(vertical ? "v:" : "h:") + std::to_string(clientWidth) +
-                          ":" + std::to_string(clientHeight) + ":" + std::to_string(dpiScale_) +
-                          ":bg:" + barBackgroundHex_ + ":fc:" + presentation.focusColor +
-                          ":rc:" + presentation.restColor + ":lc:" + presentation.lunchColor;
+                          ":" + std::to_string(clientHeight) + ":" + std::to_string(dpiScale_);
   for (const auto& segment : visible) {
     signature += ":" + segment.id + ":" + std::to_string(segment.DurationMinutes()) + ":" +
                  classtime::SegmentKindToString(segment.kind);
@@ -1994,7 +2002,7 @@ void OverlayWindow::RefreshBar() {
     segmentPanel_.Children().Clear();
 
     if (visible.empty()) {
-      auto empty = MakeText(vertical ? 11 : 12, WithAlpha(palette.foreground, 130));
+      auto empty = MakeText(vertical ? 9 : 12, *barInk_);
       empty.Text(vertical ? L"无安排" : L"今天暂无安排");
       segmentPanel_.Children().Append(empty);
     } else {
@@ -2003,7 +2011,7 @@ void OverlayWindow::RefreshBar() {
       const double contentLength = std::max(
           1.0, (vertical ? clientHeight : clientWidth) / dpiScale_ -
                    2 * (kBarInsetDip + kSurfaceStrokeDip));
-      const double gap = std::min(5.0, contentLength / (2.0 * visible.size()));
+      const double gap = std::min<double>(style_.barGapDip, contentLength / (2.0 * visible.size()));
       segmentPanel_.Spacing(gap);
       const double available = contentLength - gap * (visible.size() - 1);
       const double minimum = std::min(vertical ? 4.0 : 6.0, available / (2.0 * visible.size()));
@@ -2018,23 +2026,23 @@ void OverlayWindow::RefreshBar() {
         visual.host = Grid();
         visual.host.Background(SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0, 0, 0, 0)));
         if (vertical) {
-          visual.host.Width(kBarHostThicknessDip);
+          visual.host.Width(style_.EffectiveBarThickness(vertical) - 4);
           visual.host.Height(length);
           visual.host.HorizontalAlignment(HorizontalAlignment::Center);
         } else {
           visual.host.Width(length);
-          visual.host.Height(kBarHostThicknessDip);
+          visual.host.Height(style_.EffectiveBarThickness(vertical) - 4);
         }
         visual.host.VerticalAlignment(VerticalAlignment::Center);
 
-        const double thickness = segment.kind == classtime::SegmentKind::Break ? 5 : 8;
+        const double thickness = WidgetAppearance::BarSegmentThickness(style_, segment.kind, vertical);
         visual.thickness = thickness;
-        const double radius = std::min(length, thickness) / 2;
+        const double radius = WidgetAppearance::BarSegmentCorner(style_, length, thickness);
         const auto color = KindColor(palette, segment.kind);
         visual.track = Shapes::Rectangle();
         visual.track.RadiusX(radius);
         visual.track.RadiusY(radius);
-        visual.track.Fill(SolidColorBrush(WithAlpha(color, 39)));
+        visual.track.Fill(SolidColorBrush(WidgetAppearance::TrackColor(palette, color, 39)));
         if (vertical) {
           visual.track.Width(thickness);
           visual.track.HorizontalAlignment(HorizontalAlignment::Center);
@@ -2080,7 +2088,7 @@ void OverlayWindow::RefreshBar() {
     const double progress = WidgetSegmentProgress(segment, now, snapshot);
     const auto& visual = visuals_[i];
     const double filled = visual.length * progress;
-    const double radius = std::min(filled, visual.thickness) / 2;
+    const double radius = WidgetAppearance::BarSegmentCorner(style_, filled, visual.thickness);
     visual.fill.RadiusX(radius);
     visual.fill.RadiusY(radius);
     if (vertical) {
@@ -2093,62 +2101,15 @@ void OverlayWindow::RefreshBar() {
 
 void OverlayWindow::RefreshRing() {
   const auto now = NowClock();
-  const int nowMinutes = now.MinutesSinceMidnight();
-  const auto plan = Services::Instance().PlanFor(now);
-  const auto snapshot = classtime::Evaluate(plan.segments, now);
-  std::wstring label;
-  std::wstring time;
+  const auto& services = Services::Instance();
+  const auto& presentation = services.config().presentation;
+  const auto plan = services.PlanFor(now);
+  const auto state = BuildWidgetState(plan.segments, now, presentation.scope);
   ringDetailId_.clear();
-  if (snapshot.current) {
-    const auto& current = *snapshot.current;
-    label = current.kind == classtime::SegmentKind::Focus
-                ? L"第 " + std::to_wstring(current.focusOrdinal) + L" 节剩余"
-                : SegmentKindLabel(current.kind) + L"剩余";
-    const int remaining = (current.end.TotalMinutes() - nowMinutes) * 60 - now.second;
-    time = remaining < 3600 ? FormatElapsed(remaining)
-                            : std::to_wstring(remaining / 3600) + L":" +
-                                  FormatElapsed(remaining % 3600);
-    ringDetailId_ = current.id;
-  } else if (snapshot.next) {
-    const bool started = std::any_of(plan.segments.begin(), plan.segments.end(),
-                                     [nowMinutes](const auto& segment) {
-                                       return segment.start.TotalMinutes() <= nowMinutes;
-                                     });
-    label = started ? L"空档 · 下一段" : L"首段开始";
-    time = FormatClock(snapshot.next->start);
-    ringDetailId_ = snapshot.next->id;
-  } else {
-    time = snapshot.hasSchedule ? L"今日已结束" : L"今天没有安排";
-  }
-  ringLabel_.Text(label);
-  ringTime_.Text(time);
-  ringTime_.FontSize(label.empty() ? 18 : (time.size() > 5 ? 27 : 32));
-  Canvas::SetTop(ringTime_, label.empty() ? 66 : 58);
-
-  std::wstring summary;
-  if (allDay_) {
-    int completed = 0;
-    int total = 0;
-    for (const auto& segment : plan.segments) {
-      if (segment.kind != classtime::SegmentKind::Focus) continue;
-      ++total;
-      if (segment.end.TotalMinutes() <= nowMinutes) ++completed;
-    }
-    if (total > 0) summary = L"今日 " + std::to_wstring(completed) + L" / " +
-                             std::to_wstring(total) + L" 节";
-  }
-  ringSummary_.Text(summary);
-
-  const bool showProgress = snapshot.current && snapshot.progress > 0;
-  if (showProgress) {
-    const double sweep = snapshot.progress * 2.0 * 3.14159265358979323846;
-    ringAccent_.Color(KindColor(
-        ResolvePalette(Services::Instance().config().presentation), snapshot.current->kind));
-    ringSweep_.Point({static_cast<float>(kRingCenter + kRingRadius * std::sin(sweep)),
-                      static_cast<float>(kRingCenter - kRingRadius * std::cos(sweep))});
-    ringSweep_.IsLargeArc(snapshot.progress > 0.5);
-  }
-  ringArc_.Visibility(showProgress ? Visibility::Visible : Visibility::Collapsed);
+  if (state.snapshot.current) ringDetailId_ = state.snapshot.current->id;
+  else if (state.snapshot.next) ringDetailId_ = state.snapshot.next->id;
+  WidgetAppearance::UpdateRingReadout(ringFace_, presentation, ResolvePalette(presentation),
+                                     state, plan.segments, now);
 
   if (detailAnchor_ == ringRoot_) {
     if (ringDetailId_.empty()) HideDetail(true);

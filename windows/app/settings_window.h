@@ -8,6 +8,7 @@
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 
 #include "timeline_edit.h"
+#include "widget_appearance.h"
 
 namespace ClassTimeApp {
 
@@ -48,6 +49,9 @@ class SettingsWindow {
   void BuildTemplatesPage();
   void BuildDisplayPage();
   void BuildAppearancePage();
+  void BuildWidgetShapeOptions(const winrt::Microsoft::UI::Xaml::Controls::StackPanel& page);
+  void BuildWidgetPaletteOptions(const winrt::Microsoft::UI::Xaml::Controls::StackPanel& page);
+  void BuildWidgetOutfits(const winrt::Microsoft::UI::Xaml::Controls::StackPanel& page);
   void BuildDisplayPreview();
   void BuildNotificationPage();
   void BuildVisualAlertsPage();
@@ -72,18 +76,23 @@ class SettingsWindow {
   double TimelineX(int minute) const;
   int TimelineMinute(double x) const;
   void RefreshDisplayControls();
+  void SaveDisplaySettings(const classtime::PresentationSettings& presentation);
   void RefreshAppearanceControls();
   void RefreshDisplayMonitors();
   void RefreshDisplayPreview(const classtime::PresentationSettings& presentation);
   void StartPreviewRefresh();
   void StopPreviewRefresh();
   void ReleasePreviewResources();
-  void CommitScreenEdgeThickness();
-  // 长条长度/背景色：拖动期间只更新预览，停顿后合并保存。
-  void CommitBarLength();
-  void CommitBarBackground();
-  void RefreshPhaseColorEditor();
-  void CommitPhaseColors();
+  classtime::WidgetStyle EditableWidgetStyle() const;
+  void EditWidgetStyle(classtime::WidgetStyle style, bool debounce = false);
+  bool CommitWidgetStyle(std::optional<classtime::PresentationSettings::View> view = std::nullopt);
+  void ApplyOutfit(const classtime::WidgetOutfit& outfit);
+  void RefreshWidgetColors();
+  void RefreshSavedOutfits(const std::string& selected = {});
+  void RefreshSavedOutfitPreview();
+  void EditSavedOutfitName(bool rename);
+  void RemoveSavedOutfit();
+  void ShowAppearanceNotice(const std::wstring& message, bool error = false);
   // 模板重命名防抖提交。
   void CommitTemplateName();
   void RefreshNotificationControls();
@@ -231,41 +240,45 @@ class SettingsWindow {
   struct PreviewAppearance {
     classtime::PresentationSettings presentation;
     bool expanded = false;
-    int thickness = 0;
   };
   PreviewAppearance previewAppearance_[2];
+  std::optional<WidgetAppearance::Palette> previewPalette_;
+  WidgetAppearance::RingFace previewDials_[2], previewDetailDial_;
+  bool previewSample_ = false;
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard previewMotion_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard previewHighlightMotion_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel dockControls_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel dockBehavior_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::Border screenEdgeAppearanceGroup_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel screenEdgeColorPanel_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid screenEdgeColorSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid screenEdgeGradientRow_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch screenEdgeGradientToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch screenEdgeHighlightToggle_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::Slider screenEdgeSlider_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::TextBlock screenEdgeValue_{nullptr};
-  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer thicknessTimer_{nullptr};
-  std::optional<int> pendingThickness_;
-  // 长条长度（仅分节长条视图可见）与背景色。
-  winrt::Microsoft::UI::Xaml::Controls::Border barAppearanceGroup_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::Slider barLengthSlider_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::TextBlock barLengthValue_{nullptr};
-  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer barLengthTimer_{nullptr};
-  std::optional<int> pendingBarLength_;
-  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch barBackgroundToggle_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::ColorPicker barColorPicker_{nullptr};
-  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer barColorTimer_{nullptr};
-  std::optional<std::string> pendingBarBackground_;
-  // 全局阶段配色（上课 / 课间 / 午休）：分项切换共用同一取色器，停顿后防抖写入。
-  winrt::Microsoft::UI::Xaml::Controls::Grid phaseColorTargetSegments_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch phaseColorToggle_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::TextBlock phaseColorHint_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::ColorPicker phaseColorPicker_{nullptr};
-  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer phaseColorTimer_{nullptr};
-  int phaseColorTarget_ = 0;
-  std::array<std::optional<std::string>, 3> pendingPhaseColors_{};
+  struct DimensionControl {
+    int classtime::WidgetStyle::* field;
+    winrt::Microsoft::UI::Xaml::Controls::Slider slider;
+    winrt::Microsoft::UI::Xaml::Controls::NumberBox value;
+  };
+  std::vector<DimensionControl> widgetDimensions_;
+  std::vector<winrt::Microsoft::UI::Xaml::Controls::Border> widgetShapeGroups_;
+  std::vector<winrt::Microsoft::UI::Xaml::Controls::Grid> widgetStyleChoices_;
+  winrt::Microsoft::UI::Xaml::Controls::Grid widgetViewChoices_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Border appearanceTabsHost_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid ringReadoutChoices_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid widgetSkinChoices_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid outfitChoices_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::InfoBar appearanceNotice_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::InfoBar displayNotice_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock widgetSkinSummary_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid widgetColorChoices_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ColorPicker widgetColorPicker_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock widgetColorLabel_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ComboBox savedOutfitCombo_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::StackPanel savedOutfitActions_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Border savedOutfitPreview_{nullptr};
+  size_t widgetColorTarget_ = 0;
+  winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer widgetStyleTimer_{nullptr};
+  std::optional<classtime::WidgetStyle> pendingWidgetStyle_;
   bool previewHovered_ = false;
   winrt::Microsoft::UI::Xaml::Controls::Button reanchorButton_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch visibleToggle_{nullptr};

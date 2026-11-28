@@ -5,16 +5,41 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "classtime/schedule.h"
 
 namespace classtime {
 
-struct PresentationSettings {
-  enum class View { Bar, Ring, ScreenEdge };
-  enum class Scope { AllDay, CurrentBlock };
-  enum class Edge { Top, Bottom, Left, Right };
+struct WidgetColors {
+  // RRGGBB. Empty values follow the current Windows theme or the stock phase colors.
+  std::string barBackground;
+  std::string ringBackground;
+  std::string focusColor;
+  std::string restColor;
+  std::string longRestColor;
+  std::string lunchColor;
+  std::string trackColor;
+  std::string inkColor;
+
+  bool operator==(const WidgetColors& other) const { return Values() == other.Values(); }
+
+ private:
+  using ValuesTuple = std::tuple<const std::string&, const std::string&, const std::string&,
+                                 const std::string&, const std::string&, const std::string&,
+                                 const std::string&, const std::string&>;
+  ValuesTuple Values() const {
+    return std::tie(barBackground, ringBackground, focusColor, restColor, longRestColor, lunchColor,
+                    trackColor, inkColor);
+  }
+};
+
+struct WidgetStyle {
+  enum class BarStyle { Classic, Blocks, FineLine };
+  enum class RingStyle { Classic, Instrument, RoundedSquare };
+  enum class RingReadout { Remaining, Progress, EndTime };
+  enum class ScreenEdgeStyle { Solid, DoubleRail, SoftLine };
   enum class ScreenEdgeColors { Schedule, CurrentState };
 
   static constexpr int kMinScreenEdgeThickness = 4;
@@ -26,6 +51,61 @@ struct PresentationSettings {
   static constexpr int kDefaultBarLength = 0;
   static constexpr int kDefaultHorizontalBarLength = 680;
   static constexpr int kDefaultVerticalBarLength = 420;
+  static constexpr int kMinBarThickness = 24;
+  static constexpr int kMaxBarThickness = 60;
+  static constexpr int kMaxBarCorner = 30;
+  static constexpr int kMaxBarGap = 16;
+  static constexpr int kMinRingDiameter = 112;
+  static constexpr int kMaxRingDiameter = 256;
+  static constexpr int kDefaultRingDiameter = 156;
+  static constexpr int kMinRingStroke = 3;
+  static constexpr int kMaxRingStroke = 14;
+  static constexpr int kMaxScreenEdgeInset = 32;
+
+  BarStyle barStyle = BarStyle::Classic;
+  int barLengthDip = kDefaultBarLength;
+  int barThicknessDip = 0;  // 0 uses the default thickness for the current orientation.
+  int barCornerDip = -1;    // -1 uses the largest corner allowed by the thickness.
+  int barGapDip = 5;
+  RingStyle ringStyle = RingStyle::Classic;
+  RingReadout ringReadout = RingReadout::Remaining;
+  int ringDiameterDip = kDefaultRingDiameter;
+  int ringStrokeDip = 7;
+  ScreenEdgeStyle screenEdgeStyle = ScreenEdgeStyle::Solid;
+  int screenEdgeThickness = kDefaultScreenEdgeThickness;
+  int screenEdgeInsetDip = 0;
+  ScreenEdgeColors screenEdgeColors = ScreenEdgeColors::Schedule;
+  bool screenEdgeGradient = true;
+  bool screenEdgeHighlight = true;
+  WidgetColors colors;
+
+  int EffectiveBarLength(bool vertical) const {
+    if (barLengthDip != kDefaultBarLength) return barLengthDip;
+    return vertical ? kDefaultVerticalBarLength : kDefaultHorizontalBarLength;
+  }
+
+  int EffectiveBarThickness(bool vertical) const {
+    if (barThicknessDip != 0) return barThicknessDip;
+    return vertical ? 34 : 32;
+  }
+
+  double EffectiveBarCorner(bool vertical) const;
+  bool operator==(const WidgetStyle& other) const;
+
+ private:
+  auto Values() const {
+    return std::tie(barStyle, barLengthDip, barThicknessDip, barCornerDip, barGapDip, ringStyle,
+                    ringReadout, ringDiameterDip, ringStrokeDip, screenEdgeStyle, screenEdgeThickness,
+                    screenEdgeInsetDip, screenEdgeColors, screenEdgeGradient, screenEdgeHighlight,
+                    colors);
+  }
+};
+
+struct PresentationSettings {
+  enum class View { Bar, Ring, ScreenEdge };
+  enum class Scope { AllDay, CurrentBlock };
+  enum class Edge { Top, Bottom, Left, Right };
+
   View view = View::Bar;
   Scope scope = Scope::AllDay;
   Edge edge = Edge::Bottom;
@@ -37,31 +117,21 @@ struct PresentationSettings {
   bool hideInFullscreen = false;
   // 是否允许组件覆盖在任务栏上方（使用完整显示器区域而非工作区）。
   bool coverTaskbar = false;
-  int screenEdgeThickness = kDefaultScreenEdgeThickness;  // DIP
-  ScreenEdgeColors screenEdgeColors = ScreenEdgeColors::Schedule;
-  // 全天按时段分色边框是否在颜色交界处启用平滑渐变；关闭则清晰分段。
-  bool screenEdgeGradient = true;
-  // 屏幕边框是否在当前进度位置叠加前沿高光，便于分辨进度位置。
-  bool screenEdgeHighlight = true;
-  // 分节长条沿贴边方向的整体长度（DIP）；顶部/底部控制宽度，左右控制竖向高度。
-  // 圆环与屏幕边框不受影响。
-  int barLengthDip = kDefaultBarLength;
   int timelineSnapMinutes = 5;
-  // 长条背景色，"RRGGBB" 十六进制字符串；空表示跟随系统背景色。
-  std::string barBackground;
-  // 各时段自定义颜色，"RRGGBB" 十六进制字符串；空表示使用默认色（上课跟随系统强调色，课间 #3FA796，午休 #E0A458）。
-  std::string focusColor;
-  std::string restColor;
-  std::string lunchColor;
+  WidgetStyle style;
   std::string monitorId;  // 显示器设备名；空表示主屏
   int offsetX = 0;        // 相对工作区水平居中位置的 DIP 偏移
   int offsetY = 12;       // 距离工作区边缘的 DIP
 
-  int EffectiveBarLength() const {
-    if (barLengthDip != kDefaultBarLength) return barLengthDip;
-    return edge == Edge::Left || edge == Edge::Right ? kDefaultVerticalBarLength
-                                                    : kDefaultHorizontalBarLength;
-  }
+  bool IsVertical() const { return edge == Edge::Left || edge == Edge::Right; }
+};
+
+struct WidgetOutfit {
+  static constexpr size_t kMaxSaved = 32;
+  static constexpr size_t kMaxNameLength = 36;
+  std::string name;
+  PresentationSettings::View view = PresentationSettings::View::Bar;
+  WidgetStyle style;
 };
 
 struct NotificationSettings {
@@ -104,6 +174,7 @@ struct AppConfig {
   std::vector<Schedule> templates;
   std::map<std::string, DailyOverride> dailyOverrides;  // YYYY-MM-DD
   PresentationSettings presentation;
+  std::vector<WidgetOutfit> widgetOutfits;
   NotificationSettings notifications;
   bool launchAtLogin = false;
 };

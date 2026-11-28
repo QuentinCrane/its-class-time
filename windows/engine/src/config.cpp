@@ -169,6 +169,107 @@ bool IsValidHexColor(const std::string& text) {
   return true;
 }
 
+constexpr const char* kBarStyles[] = {"classic", "blocks", "fine_line"};
+constexpr const char* kRingStyles[] = {"classic", "instrument", "rounded_square"};
+constexpr const char* kRingReadouts[] = {"remaining", "progress", "end_time"};
+constexpr const char* kEdgeStyles[] = {"solid", "double_rail", "soft_line"};
+
+template <typename Choice, size_t N>
+Choice ReadChoice(const json::Value& object, const char* key, const char* const (&names)[N]) {
+  const auto* field = object.Find(key);
+  const auto text = field ? field->AsString() : std::string{};
+  const auto end = names + N;
+  const auto found = std::find(names, end, text);
+  return static_cast<Choice>(found == end ? 0 : found - names);
+}
+
+int ReadDimension(const json::Value& object, const char* key, int fallback, int minimum,
+                  int maximum) {
+  const auto* field = object.Find(key);
+  const int value = field ? field->AsInt(fallback) : fallback;
+  return value == fallback ? fallback : std::clamp(value, minimum, maximum);
+}
+
+constexpr std::pair<const char*, std::string WidgetColors::*> kColorFields[] = {
+    {"barBackground", &WidgetColors::barBackground}, {"ringBackground", &WidgetColors::ringBackground},
+    {"focusColor", &WidgetColors::focusColor}, {"restColor", &WidgetColors::restColor},
+    {"longRestColor", &WidgetColors::longRestColor}, {"lunchColor", &WidgetColors::lunchColor},
+    {"trackColor", &WidgetColors::trackColor}, {"inkColor", &WidgetColors::inkColor},
+};
+
+WidgetStyle ReadWidgetStyle(const json::Value& object) {
+  WidgetStyle style;
+  style.barStyle = ReadChoice<WidgetStyle::BarStyle>(object, "barStyle", kBarStyles);
+  style.barLengthDip = ReadDimension(object, "barLengthDip", style.barLengthDip,
+                                     WidgetStyle::kMinBarLength, WidgetStyle::kMaxBarLength);
+  style.barThicknessDip = ReadDimension(object, "barThicknessDip", style.barThicknessDip,
+                                        WidgetStyle::kMinBarThickness, WidgetStyle::kMaxBarThickness);
+  style.barCornerDip = ReadDimension(object, "barCornerDip", style.barCornerDip,
+                                     0, WidgetStyle::kMaxBarCorner);
+  style.barGapDip = ReadDimension(object, "barGapDip", style.barGapDip, 0, WidgetStyle::kMaxBarGap);
+  style.ringStyle = ReadChoice<WidgetStyle::RingStyle>(object, "ringStyle", kRingStyles);
+  style.ringReadout = ReadChoice<WidgetStyle::RingReadout>(object, "ringReadout", kRingReadouts);
+  style.ringDiameterDip = ReadDimension(object, "ringDiameterDip", style.ringDiameterDip,
+                                         WidgetStyle::kMinRingDiameter,
+                                         WidgetStyle::kMaxRingDiameter);
+  style.ringStrokeDip = ReadDimension(object, "ringStrokeDip", style.ringStrokeDip,
+                                      WidgetStyle::kMinRingStroke, WidgetStyle::kMaxRingStroke);
+  style.screenEdgeStyle = ReadChoice<WidgetStyle::ScreenEdgeStyle>(object, "screenEdgeStyle",
+                                                                    kEdgeStyles);
+  style.screenEdgeThickness = ReadDimension(object, "screenEdgeThickness", style.screenEdgeThickness,
+                                             WidgetStyle::kMinScreenEdgeThickness,
+                                             WidgetStyle::kMaxScreenEdgeThickness);
+  style.screenEdgeInsetDip = ReadDimension(object, "screenEdgeInsetDip", style.screenEdgeInsetDip,
+                                            0, WidgetStyle::kMaxScreenEdgeInset);
+  if (const auto* colors = object.Find("screenEdgeColors")) {
+    if (colors->AsString() == "current_state") {
+      style.screenEdgeColors = WidgetStyle::ScreenEdgeColors::CurrentState;
+    }
+  }
+  if (const auto* field = object.Find("screenEdgeGradient")) {
+    style.screenEdgeGradient = field->AsBool(style.screenEdgeGradient);
+  }
+  if (const auto* field = object.Find("screenEdgeHighlight")) {
+    style.screenEdgeHighlight = field->AsBool(style.screenEdgeHighlight);
+  }
+  for (const auto& [name, member] : kColorFields) {
+    if (const auto* field = object.Find(name)) {
+      auto value = field->AsString();
+      if (IsValidHexColor(value)) {
+        for (char& digit : value) {
+          if (digit >= 'a' && digit <= 'f') digit -= 'a' - 'A';
+        }
+        style.colors.*member = std::move(value);
+      }
+    }
+  }
+  return style;
+}
+
+void WriteWidgetStyle(json::Value& object, const WidgetStyle& style) {
+  object.Set("barStyle", json::Value::MakeString(kBarStyles[static_cast<int>(style.barStyle)]));
+  object.Set("barLengthDip", json::Value::MakeNumber(style.barLengthDip));
+  object.Set("barThicknessDip", json::Value::MakeNumber(style.barThicknessDip));
+  object.Set("barCornerDip", json::Value::MakeNumber(style.barCornerDip));
+  object.Set("barGapDip", json::Value::MakeNumber(style.barGapDip));
+  object.Set("ringStyle", json::Value::MakeString(kRingStyles[static_cast<int>(style.ringStyle)]));
+  object.Set("ringReadout", json::Value::MakeString(kRingReadouts[static_cast<int>(style.ringReadout)]));
+  object.Set("ringDiameterDip", json::Value::MakeNumber(style.ringDiameterDip));
+  object.Set("ringStrokeDip", json::Value::MakeNumber(style.ringStrokeDip));
+  object.Set("screenEdgeStyle", json::Value::MakeString(
+      kEdgeStyles[static_cast<int>(style.screenEdgeStyle)]));
+  object.Set("screenEdgeThickness", json::Value::MakeNumber(style.screenEdgeThickness));
+  object.Set("screenEdgeInsetDip", json::Value::MakeNumber(style.screenEdgeInsetDip));
+  object.Set("screenEdgeColors", json::Value::MakeString(
+      style.screenEdgeColors == WidgetStyle::ScreenEdgeColors::CurrentState ? "current_state"
+                                                                           : "schedule"));
+  object.Set("screenEdgeGradient", json::Value::MakeBool(style.screenEdgeGradient));
+  object.Set("screenEdgeHighlight", json::Value::MakeBool(style.screenEdgeHighlight));
+  for (const auto& [name, member] : kColorFields) {
+    object.Set(name, json::Value::MakeString(style.colors.*member));
+  }
+}
+
 bool ParseScheduleValue(const json::Value& root, Schedule& schedule, std::string* error) {
   if (!root.IsObject()) {
     if (error) *error = "模板根节点必须是对象";
@@ -209,6 +310,13 @@ bool ParseScheduleValue(const json::Value& root, Schedule& schedule, std::string
 }
 
 }  // namespace
+
+double WidgetStyle::EffectiveBarCorner(bool vertical) const {
+  const double half = EffectiveBarThickness(vertical) / 2.0;
+  return barCornerDip < 0 ? half : std::min(half, static_cast<double>(barCornerDip));
+}
+
+bool WidgetStyle::operator==(const WidgetStyle& other) const { return Values() == other.Values(); }
 
 std::optional<Schedule> ParsePreset(std::string_view text, std::string* error) {
   if (error) error->clear();
@@ -308,49 +416,10 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
     if (const json::Value* coverTaskbar = presentation->Find("coverTaskbar")) {
       config.presentation.coverTaskbar = coverTaskbar->AsBool(false);
     }
-    if (const auto* thickness = presentation->Find("screenEdgeThickness")) {
-      config.presentation.screenEdgeThickness = std::clamp(
-          thickness->AsInt(PresentationSettings::kDefaultScreenEdgeThickness),
-          PresentationSettings::kMinScreenEdgeThickness,
-          PresentationSettings::kMaxScreenEdgeThickness);
-    }
-    if (const auto* colors = presentation->Find("screenEdgeColors")) {
-      config.presentation.screenEdgeColors = colors->AsString() == "current_state"
-          ? PresentationSettings::ScreenEdgeColors::CurrentState
-          : PresentationSettings::ScreenEdgeColors::Schedule;
-    }
-    if (const auto* gradient = presentation->Find("screenEdgeGradient")) {
-      config.presentation.screenEdgeGradient = gradient->AsBool(true);
-    }
-    if (const auto* highlight = presentation->Find("screenEdgeHighlight")) {
-      config.presentation.screenEdgeHighlight = highlight->AsBool(true);
-    }
-    if (const auto* barLength = presentation->Find("barLengthDip")) {
-      const int value = barLength->AsInt(PresentationSettings::kDefaultBarLength);
-      config.presentation.barLengthDip = value == PresentationSettings::kDefaultBarLength
-          ? value : std::clamp(value, PresentationSettings::kMinBarLength,
-                               PresentationSettings::kMaxBarLength);
-    }
+    config.presentation.style = ReadWidgetStyle(*presentation);
     if (const auto* snap = presentation->Find("timelineSnapMinutes")) {
       const int value = snap->AsInt(5);
       if (value == 1 || value == 5 || value == 15) config.presentation.timelineSnapMinutes = value;
-    }
-    if (const auto* background = presentation->Find("barBackground")) {
-      const auto value = background->AsString();
-      // 只接受合法的 RRGGBB；无效值按“跟随系统”处理，不让整份配置失败。
-      if (IsValidHexColor(value)) config.presentation.barBackground = value;
-    }
-    if (const auto* focus = presentation->Find("focusColor")) {
-      const auto value = focus->AsString();
-      if (IsValidHexColor(value)) config.presentation.focusColor = value;
-    }
-    if (const auto* rest = presentation->Find("restColor")) {
-      const auto value = rest->AsString();
-      if (IsValidHexColor(value)) config.presentation.restColor = value;
-    }
-    if (const auto* lunch = presentation->Find("lunchColor")) {
-      const auto value = lunch->AsString();
-      if (IsValidHexColor(value)) config.presentation.lunchColor = value;
     }
     if (const json::Value* monitor = presentation->Find("monitorId")) {
       config.presentation.monitorId = monitor->AsString();
@@ -360,6 +429,24 @@ std::optional<AppConfig> ParseConfig(std::string_view text, std::string* error) 
     }
     if (const json::Value* offsetY = presentation->Find("offsetY")) {
       config.presentation.offsetY = offsetY->AsInt(12);
+    }
+  }
+
+  if (const auto* outfits = root.Find("widgetOutfits"); outfits && outfits->IsArray()) {
+    for (const auto& item : outfits->items()) {
+      if (config.widgetOutfits.size() == WidgetOutfit::kMaxSaved) break;
+      const auto* label = item.Find("name");
+      const auto* view = item.Find("view");
+      const auto* style = item.Find("style");
+      if (!label || !view || !view->IsString() || !style || !style->IsObject()) continue;
+      auto name = label->AsString();
+      if (name.empty() || name.size() > 4 * WidgetOutfit::kMaxNameLength ||
+          name.find_first_not_of(" \t\r\n") == std::string::npos ||
+          name.find_first_of("\r\n\t") != std::string::npos) continue;
+      const auto match = [&](const WidgetOutfit& outfit) { return outfit.name == name; };
+      if (std::any_of(config.widgetOutfits.begin(), config.widgetOutfits.end(), match)) continue;
+      config.widgetOutfits.push_back({std::move(name), ViewFromString(view->AsString()),
+                                      ReadWidgetStyle(*style)});
     }
   }
 
@@ -468,22 +555,26 @@ std::string SerializeConfig(const AppConfig& config) {
   presentation.Set("flushWithEdge", json::Value::MakeBool(config.presentation.flushWithEdge));
   presentation.Set("hideInFullscreen", json::Value::MakeBool(config.presentation.hideInFullscreen));
   presentation.Set("coverTaskbar", json::Value::MakeBool(config.presentation.coverTaskbar));
-  presentation.Set("screenEdgeThickness", json::Value::MakeNumber(config.presentation.screenEdgeThickness));
-  presentation.Set("screenEdgeColors", json::Value::MakeString(
-      config.presentation.screenEdgeColors == PresentationSettings::ScreenEdgeColors::CurrentState
-          ? "current_state" : "schedule"));
-  presentation.Set("screenEdgeGradient", json::Value::MakeBool(config.presentation.screenEdgeGradient));
-  presentation.Set("screenEdgeHighlight", json::Value::MakeBool(config.presentation.screenEdgeHighlight));
-  presentation.Set("barLengthDip", json::Value::MakeNumber(config.presentation.barLengthDip));
+  WriteWidgetStyle(presentation, config.presentation.style);
   presentation.Set("timelineSnapMinutes", json::Value::MakeNumber(config.presentation.timelineSnapMinutes));
-  presentation.Set("barBackground", json::Value::MakeString(config.presentation.barBackground));
-  presentation.Set("focusColor", json::Value::MakeString(config.presentation.focusColor));
-  presentation.Set("restColor", json::Value::MakeString(config.presentation.restColor));
-  presentation.Set("lunchColor", json::Value::MakeString(config.presentation.lunchColor));
   presentation.Set("monitorId", json::Value::MakeString(config.presentation.monitorId));
   presentation.Set("offsetX", json::Value::MakeNumber(config.presentation.offsetX));
   presentation.Set("offsetY", json::Value::MakeNumber(config.presentation.offsetY));
   root.Set("presentation", std::move(presentation));
+
+  if (!config.widgetOutfits.empty()) {
+    auto outfits = json::Value::MakeArray();
+    for (const auto& outfit : config.widgetOutfits) {
+      auto item = json::Value::MakeObject();
+      item.Set("name", json::Value::MakeString(outfit.name));
+      item.Set("view", json::Value::MakeString(ViewToString(outfit.view)));
+      auto style = json::Value::MakeObject();
+      WriteWidgetStyle(style, outfit.style);
+      item.Set("style", std::move(style));
+      outfits.Append(std::move(item));
+    }
+    root.Set("widgetOutfits", std::move(outfits));
+  }
 
   json::Value notifications = json::Value::MakeObject();
   notifications.Set("enabled", json::Value::MakeBool(config.notifications.enabled));

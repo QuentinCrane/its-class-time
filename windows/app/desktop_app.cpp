@@ -169,13 +169,6 @@ void DesktopApp::HandleTrayCommand(UINT command) {
     case kTrayToggleOverlay:
       presentation.visible = !presentation.visible;
       services.UpdatePresentation(presentation);
-      if (overlay_) {
-        if (presentation.visible) {
-          overlay_->ShowOverlay();
-        } else {
-          overlay_->HideOverlay();
-        }
-      }
       break;
     case kTrayBarView:
       presentation.view = classtime::PresentationSettings::View::Bar;

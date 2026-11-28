@@ -6,6 +6,8 @@
 #include <chrono>
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 
+#include "widget_appearance.h"
+
 namespace ClassTimeApp {
 
 class OverlayWindow {
@@ -64,8 +66,7 @@ class OverlayWindow {
   void UpdateVisibleLayer();
   void RefreshEdgeHandle();
   void RefreshBar();
-  // 长条表面：自定义背景色优先，否则跟随系统背景色。值未变化时不动画刷。
-  void ApplyBarSurface();
+  void ApplyBarSurface(const WidgetAppearance::Palette& palette);
   void RefreshRing();
   void RefreshScreenEdge();
   void HideScreenEdge();
@@ -88,12 +89,7 @@ class OverlayWindow {
   winrt::Microsoft::UI::Xaml::Shapes::Rectangle edgeFill_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::SolidColorBrush edgeFillBrush_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel segmentPanel_{nullptr};
-  winrt::Microsoft::UI::Xaml::Shapes::Path ringArc_{nullptr};
-  winrt::Microsoft::UI::Xaml::Media::ArcSegment ringSweep_{nullptr};
-  winrt::Microsoft::UI::Xaml::Media::SolidColorBrush ringAccent_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::TextBlock ringTime_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::TextBlock ringLabel_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::TextBlock ringSummary_{nullptr};
+  WidgetAppearance::RingFace ringFace_;
   std::string ringDetailId_;
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer timer_{nullptr};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer highlightTimer_{nullptr};
@@ -148,17 +144,18 @@ class OverlayWindow {
   std::string monitorId_;
   int offsetX_ = 0;
   int offsetY_ = 12;
-  // 分节长条整体长度与背景色（来自 presentation；背景为空时跟随系统）。
-  int barLengthDip_ = classtime::PresentationSettings::kDefaultBarLength;
-  std::string barBackgroundHex_;
-  std::string barSurfaceSignature_;
+  classtime::WidgetStyle style_;
+  std::optional<WidgetAppearance::Palette> barPalette_;
+  std::optional<winrt::Windows::UI::Color> barSurface_, barInk_;
   classtime::PresentationSettings::Edge edge_ = classtime::PresentationSettings::Edge::Bottom;
   double dpiScale_ = 1.0;
+  RECT layoutWorkArea_{};
   int windowWidth_ = 0;
   int windowHeight_ = 0;
   RECT windowRegionBounds_{};
   std::array<int, 4> windowRegionRadii_{};
   Layer windowRegionLayer_ = Layer::None;
+  bool windowRegionCircle_ = false;
   std::optional<uint32_t> dragPointer_;
   POINT dragStart_{};
   POINT dragOrigin_{};
@@ -190,9 +187,11 @@ class OverlayWindow {
     uint32_t track = 0;
     std::vector<uint32_t> timeline;
     StripHighlight highlight{};
+    classtime::WidgetStyle::ScreenEdgeStyle style{};
     int alpha = -1;
   };
   std::array<EdgeStrip, 4> screenEdgeStrips_;
+  RECT screenEdgeFrame_{};
 };
 
 }  // namespace ClassTimeApp

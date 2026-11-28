@@ -245,14 +245,27 @@ bool Services::ApplyScheduleEdit(const std::vector<classtime::Segment>& segments
   return true;
 }
 
-void Services::UpdatePresentation(const classtime::PresentationSettings& presentation) {
+bool Services::UpdatePresentation(const classtime::PresentationSettings& presentation) {
   {
     std::lock_guard<std::mutex> guard(mutex_);
+    auto previous = config_.presentation;
     config_.presentation = presentation;
-    PersistConfig();
+    if (!PersistConfig()) {
+      config_.presentation = std::move(previous);
+      return false;
+    }
     RecomputeLocked();
   }
   NotifyChanged(Change::Presentation);
+  return true;
+}
+
+bool Services::UpdateWidgetOutfits(std::vector<classtime::WidgetOutfit> outfits) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  config_.widgetOutfits.swap(outfits);
+  if (PersistConfig()) return true;
+  config_.widgetOutfits.swap(outfits);
+  return false;
 }
 
 void Services::UpdateNotifications(const classtime::NotificationSettings& settings) {

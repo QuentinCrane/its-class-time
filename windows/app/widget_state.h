@@ -21,6 +21,46 @@ struct WidgetState {
   int focusTotal = 0;
 };
 
+inline bool PreviewWidgetExpanded(bool autoHide, bool hovered, bool sample) {
+  return autoHide && (hovered || sample);
+}
+
+struct ScreenEdgeRect {
+  double x, y, width, height;
+};
+
+struct ScreenEdgeBand {
+  double start, end, opacity;
+};
+
+inline std::array<ScreenEdgeBand, 3> ScreenEdgeBands(classtime::WidgetStyle::ScreenEdgeStyle style) {
+  using Style = classtime::WidgetStyle::ScreenEdgeStyle;
+  switch (style) {
+    case Style::DoubleRail: return {{{0, 0.30, 1}, {0.30, 0.70, 0}, {0.70, 1, 1}}};
+    case Style::SoftLine: return {{{0, 0.28, 0.34}, {0.28, 0.72, 1}, {0.72, 1, 0.34}}};
+    default: return {{{0, 1, 1}, {0, 0, 0}, {0, 0, 0}}};
+  }
+}
+
+// Intersect concentric rectangular bands with the four time strips. The band runs
+// through the corners even when the adjoining strip is owned by a different side.
+inline std::array<ScreenEdgeRect, 4> ScreenEdgeBandRects(
+    const ScreenEdgeRect& frame, double start, double end) {
+  const double x = frame.x + start, y = frame.y + start;
+  const double width = frame.width - 2 * start, height = frame.height - 2 * start;
+  const double line = end - start;
+  return {{{x, y, width, line},
+           {x + width - line, y + line, line, height - line},
+           {x, y + height - line, width - line, line},
+           {x, y + line, line, height - 2 * line}}};
+}
+
+inline ScreenEdgeRect IntersectScreenEdgeRects(const ScreenEdgeRect& a, const ScreenEdgeRect& b) {
+  const double x = std::max(a.x, b.x), y = std::max(a.y, b.y);
+  return {x, y, std::max(0.0, std::min(a.x + a.width, b.x + b.width) - x),
+                std::max(0.0, std::min(a.y + a.height, b.y + b.height) - y)};
+}
+
 // 全天边框从首段开始到末段结束；空档占据真实时间，未到与已过分别呈现。
 struct ScreenEdgeRun {
   double begin = 0;

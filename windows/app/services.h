@@ -44,7 +44,8 @@ class Services {
   bool ApplyScheduleEdit(const std::vector<classtime::Segment>& segments, SaveScope scope,
                          std::string* error);
 
-  void UpdatePresentation(const classtime::PresentationSettings& presentation);
+  bool UpdatePresentation(const classtime::PresentationSettings& presentation);
+  bool UpdateWidgetOutfits(std::vector<classtime::WidgetOutfit> outfits);
   void UpdateNotifications(const classtime::NotificationSettings& settings);
   void SetMuted(bool muted);
   void SetLaunchAtLogin(bool enabled);

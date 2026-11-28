@@ -367,8 +367,8 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   config.presentation.flushWithEdge = false;
   config.presentation.hideInFullscreen = true;
   config.presentation.coverTaskbar = true;
-  config.presentation.barLengthDip = 1040;
-  config.presentation.barBackground = "2B4C7E";
+  config.presentation.style.barLengthDip = 1040;
+  config.presentation.style.colors.barBackground = "2B4C7E";
   config.presentation.timelineSnapMinutes = 1;
   config.notifications.muted = true;
   config.notifications.screenEdgeFlash = true;
@@ -397,8 +397,8 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   Check(!parsed->presentation.flushWithEdge, "保留悬浮间距设置");
   Check(parsed->presentation.hideInFullscreen, "保留全屏自动隐藏设置");
   Check(parsed->presentation.coverTaskbar, "保留允许覆盖任务栏设置");
-  Check(parsed->presentation.barLengthDip == 1040, "保留自定义长条长度");
-  Check(parsed->presentation.barBackground == "2B4C7E", "保留自定义长条背景色");
+  Check(parsed->presentation.style.barLengthDip == 1040, "保留自定义长条长度");
+  Check(parsed->presentation.style.colors.barBackground == "2B4C7E", "保留自定义长条背景色");
   Check(parsed->presentation.timelineSnapMinutes == 1, "保留时间轴步进");
 
   config.presentation.edge = classtime::PresentationSettings::Edge::Left;
@@ -417,63 +417,63 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   Check(parsed->revision == 7, "保留修订号");
 
   config.presentation.view = classtime::PresentationSettings::View::ScreenEdge;
-  config.presentation.screenEdgeThickness = 17;
-  config.presentation.screenEdgeColors = classtime::PresentationSettings::ScreenEdgeColors::CurrentState;
-  config.presentation.screenEdgeGradient = false;
-  config.presentation.screenEdgeHighlight = false;
+  config.presentation.style.screenEdgeThickness = 17;
+  config.presentation.style.screenEdgeColors = classtime::WidgetStyle::ScreenEdgeColors::CurrentState;
+  config.presentation.style.screenEdgeGradient = false;
+  config.presentation.style.screenEdgeHighlight = false;
   const auto edgeConfig = classtime::ParseConfig(classtime::SerializeConfig(config), &error);
   Check(edgeConfig && edgeConfig->presentation.view == classtime::PresentationSettings::View::ScreenEdge,
         "保留屏幕边框视图");
-  Check(edgeConfig && edgeConfig->presentation.screenEdgeThickness == 17, "保留屏幕边框粗细");
-  Check(edgeConfig && edgeConfig->presentation.screenEdgeColors ==
-                          classtime::PresentationSettings::ScreenEdgeColors::CurrentState,
+  Check(edgeConfig && edgeConfig->presentation.style.screenEdgeThickness == 17, "保留屏幕边框粗细");
+  Check(edgeConfig && edgeConfig->presentation.style.screenEdgeColors ==
+                          classtime::WidgetStyle::ScreenEdgeColors::CurrentState,
         "保留屏幕边框的跟随当前时段配色");
-  Check(edgeConfig && !edgeConfig->presentation.screenEdgeGradient, "保留屏幕边框非渐变设置");
-  Check(edgeConfig && !edgeConfig->presentation.screenEdgeHighlight, "保留屏幕边框关闭高光设置");
+  Check(edgeConfig && !edgeConfig->presentation.style.screenEdgeGradient, "保留屏幕边框非渐变设置");
+  Check(edgeConfig && !edgeConfig->presentation.style.screenEdgeHighlight, "保留屏幕边框关闭高光设置");
   const auto withTemplate = "{\"templates\":[" + classtime::SerializeSchedule(highSchool, 0) +
                             "],\"presentation\":";
   const auto legacy = classtime::ParseConfig(withTemplate + R"({"view":"screen_edge"}})", &error);
-  Check(legacy && legacy->presentation.screenEdgeThickness == 10, "旧配置默认使用加粗边框");
-  Check(legacy && legacy->presentation.screenEdgeColors ==
-                       classtime::PresentationSettings::ScreenEdgeColors::Schedule,
+  Check(legacy && legacy->presentation.style.screenEdgeThickness == 10, "旧配置默认使用加粗边框");
+  Check(legacy && legacy->presentation.style.screenEdgeColors ==
+                       classtime::WidgetStyle::ScreenEdgeColors::Schedule,
         "旧配置默认使用按时段分色");
   Check(legacy && !legacy->presentation.hideInFullscreen, "旧配置默认不启用全屏自动隐藏");
   Check(legacy && !legacy->presentation.coverTaskbar, "旧配置默认不覆盖任务栏");
-  Check(legacy && legacy->presentation.screenEdgeGradient, "旧配置默认开启边框颜色渐变");
-  Check(legacy && legacy->presentation.screenEdgeHighlight, "旧配置默认开启边框进度高光");
+  Check(legacy && legacy->presentation.style.screenEdgeGradient, "旧配置默认开启边框颜色渐变");
+  Check(legacy && legacy->presentation.style.screenEdgeHighlight, "旧配置默认开启边框进度高光");
   const auto unknownColors =
       classtime::ParseConfig(withTemplate + R"({"screenEdgeColors":"unknown"}})", &error);
-  Check(unknownColors && unknownColors->presentation.screenEdgeColors ==
-                              classtime::PresentationSettings::ScreenEdgeColors::Schedule,
+  Check(unknownColors && unknownColors->presentation.style.screenEdgeColors ==
+                              classtime::WidgetStyle::ScreenEdgeColors::Schedule,
         "未知边框配色回退到按时段分色");
   Check(legacy && legacy->presentation.flushWithEdge, "旧配置默认紧贴边缘");
-  Check(legacy && legacy->presentation.barLengthDip == 0 &&
-            legacy->presentation.EffectiveBarLength() == 680,
+  Check(legacy && legacy->presentation.style.barLengthDip == 0 &&
+            legacy->presentation.style.EffectiveBarLength(false) == 680,
         "旧配置保持横向长条默认长度 680");
   if (legacy) {
     auto side = legacy->presentation;
     side.edge = classtime::PresentationSettings::Edge::Left;
-    Check(side.EffectiveBarLength() == 420, "旧配置保持竖向长条默认长度 420");
+    Check(side.style.EffectiveBarLength(side.IsVertical()) == 420, "旧配置保持竖向长条默认长度 420");
   }
   Check(legacy && legacy->presentation.timelineSnapMinutes == 5, "旧配置默认 5 分钟拖动步进");
-  Check(legacy && legacy->presentation.barBackground.empty(), "旧配置默认跟随系统背景色");
+  Check(legacy && legacy->presentation.style.colors.barBackground.empty(), "旧配置默认跟随系统背景色");
   const auto oversized =
       classtime::ParseConfig(withTemplate + R"({"screenEdgeThickness":100}})", &error);
-  Check(oversized && oversized->presentation.screenEdgeThickness == 24, "边框粗细限制在滑块范围内");
+  Check(oversized && oversized->presentation.style.screenEdgeThickness == 24, "边框粗细限制在滑块范围内");
   const auto unknownEdge =
       classtime::ParseConfig(withTemplate + R"({"edge":"diagonal"}})", &error);
   Check(unknownEdge && unknownEdge->presentation.edge == classtime::PresentationSettings::Edge::Bottom,
         "未知贴边位置回退到底部");
   const auto tooLong = classtime::ParseConfig(withTemplate + R"({"barLengthDip":99999}})", &error);
-  Check(tooLong && tooLong->presentation.barLengthDip == 1600, "长条长度上限 1600");
+  Check(tooLong && tooLong->presentation.style.barLengthDip == 1600, "长条长度上限 1600");
   const auto tooShort = classtime::ParseConfig(withTemplate + R"({"barLengthDip":30}})", &error);
-  Check(tooShort && tooShort->presentation.barLengthDip == 240, "长条长度下限 240");
+  Check(tooShort && tooShort->presentation.style.barLengthDip == 240, "长条长度下限 240");
   const auto badColor =
       classtime::ParseConfig(withTemplate + R"({"barBackground":"XYZ123"}})", &error);
-  Check(badColor && badColor->presentation.barBackground.empty(), "非法背景色回退跟随系统");
+  Check(badColor && badColor->presentation.style.colors.barBackground.empty(), "非法背景色回退跟随系统");
   const auto longColor =
       classtime::ParseConfig(withTemplate + R"({"barBackground":"#A1B2C3"}})", &error);
-  Check(longColor && longColor->presentation.barBackground.empty(), "带井号的颜色视为非法");
+  Check(longColor && longColor->presentation.style.colors.barBackground.empty(), "带井号的颜色视为非法");
   const auto invalidSnap =
       classtime::ParseConfig(withTemplate + R"({"timelineSnapMinutes":2}})", &error);
   Check(invalidSnap && invalidSnap->presentation.timelineSnapMinutes == 5, "非法步进回退默认值");
@@ -517,8 +517,8 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
             invalidVisualNotify->notifications.dropClockSkin ==
                 classtime::NotificationSettings::AlertClockSkin::Graphite,
         "未知 3D 时钟样式、皮肤或掉落位置回退默认值");
-  Check(legacy && legacy->presentation.focusColor.empty() && legacy->presentation.restColor.empty() &&
-            legacy->presentation.lunchColor.empty() &&
+  Check(legacy && legacy->presentation.style.colors.focusColor.empty() && legacy->presentation.style.colors.restColor.empty() &&
+            legacy->presentation.style.colors.lunchColor.empty() &&
             legacy->notifications.screenEdgeFlashColor.empty() &&
             legacy->notifications.dropClockBodyColor.empty() &&
             legacy->notifications.dropClockFaceColor.empty() &&
@@ -529,9 +529,9 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
         "旧配置默认全部自定义阶段色与视觉提醒颜色为空且皮肤为深邃金属");
 
   classtime::AppConfig colorConfig = config;
-  colorConfig.presentation.focusColor = "1E6BFF";
-  colorConfig.presentation.restColor = "22AA88";
-  colorConfig.presentation.lunchColor = "F59E0B";
+  colorConfig.presentation.style.colors.focusColor = "1E6BFF";
+  colorConfig.presentation.style.colors.restColor = "22AA88";
+  colorConfig.presentation.style.colors.lunchColor = "F59E0B";
   colorConfig.notifications.dropClockSkin =
       classtime::NotificationSettings::AlertClockSkin::VintageGold;
   colorConfig.notifications.screenEdgeFlashColor = "FF5533";
@@ -540,9 +540,9 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
   colorConfig.notifications.dropClockTextColor = "2B2016";
   colorConfig.notifications.dropClockAccentColor = "00C2A8";
   const auto colorParsed = classtime::ParseConfig(classtime::SerializeConfig(colorConfig), &error);
-  Check(colorParsed && colorParsed->presentation.focusColor == "1E6BFF" &&
-            colorParsed->presentation.restColor == "22AA88" &&
-            colorParsed->presentation.lunchColor == "F59E0B" &&
+  Check(colorParsed && colorParsed->presentation.style.colors.focusColor == "1E6BFF" &&
+            colorParsed->presentation.style.colors.restColor == "22AA88" &&
+            colorParsed->presentation.style.colors.lunchColor == "F59E0B" &&
             colorParsed->notifications.dropClockSkin ==
                 classtime::NotificationSettings::AlertClockSkin::VintageGold &&
             colorParsed->notifications.screenEdgeFlashColor == "FF5533" &&
@@ -567,8 +567,8 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
           "],\"presentation\":{\"focusColor\":\"#112233\",\"restColor\":\"GGGGGG\",\"lunchColor\":\"12345\"},"
           "\"notifications\":{\"dropClockSkin\":\"unknown_skin\",\"screenEdgeFlashColor\":\"bad\",\"dropClockBodyColor\":\"1234567\",\"dropClockFaceColor\":\"xyz\",\"dropClockTextColor\":\"123\",\"dropClockAccentColor\":\"\"}}",
       &error);
-  Check(badColors && badColors->presentation.focusColor.empty() &&
-            badColors->presentation.restColor.empty() && badColors->presentation.lunchColor.empty() &&
+  Check(badColors && badColors->presentation.style.colors.focusColor.empty() &&
+            badColors->presentation.style.colors.restColor.empty() && badColors->presentation.style.colors.lunchColor.empty() &&
             badColors->notifications.dropClockSkin ==
                 classtime::NotificationSettings::AlertClockSkin::Graphite &&
             badColors->notifications.screenEdgeFlashColor.empty() &&
@@ -577,6 +577,62 @@ void TestConfigRoundtrip(const classtime::Schedule& highSchool,
             badColors->notifications.dropClockTextColor.empty() &&
             badColors->notifications.dropClockAccentColor.empty(),
         "非法阶段色、未知皮肤或提醒颜色静默回退为空/默认，不阻断配置读取");
+
+  using WidgetStyle = classtime::WidgetStyle;
+  using View = classtime::PresentationSettings::View;
+  WidgetStyle style;
+  style.barStyle = WidgetStyle::BarStyle::Blocks;
+  style.barLengthDip = 590;
+  style.barThicknessDip = 45;
+  style.barCornerDip = 9;
+  style.barGapDip = 13;
+  style.ringStyle = WidgetStyle::RingStyle::RoundedSquare;
+  style.ringReadout = WidgetStyle::RingReadout::EndTime;
+  style.ringDiameterDip = 208;
+  style.ringStrokeDip = 13;
+  style.screenEdgeStyle = WidgetStyle::ScreenEdgeStyle::DoubleRail;
+  style.screenEdgeThickness = 18;
+  style.screenEdgeInsetDip = 11;
+  style.screenEdgeColors = WidgetStyle::ScreenEdgeColors::CurrentState;
+  style.screenEdgeGradient = false;
+  style.screenEdgeHighlight = false;
+  style.colors = {"142B38", "242736", "87C3FF", "86DBB6", "C6B1F6", "F8CB85",
+                  "4A5C6A", "D2EBFF"};
+  auto styled = config;
+  styled.presentation.style = style;
+  styled.widgetOutfits = {{"夜间学习", View::Ring, style}, {"经典", View::Bar, {}}};
+  const auto restored = classtime::ParseConfig(classtime::SerializeConfig(styled), &error);
+  Check(restored && restored->presentation.style == style, "组件的全部外观自定义设置可往返保存");
+  Check(restored && restored->widgetOutfits.size() == 2 &&
+            restored->widgetOutfits[0].name == "夜间学习" &&
+            restored->widgetOutfits[0].view == View::Ring &&
+            restored->widgetOutfits[0].style == style &&
+            restored->widgetOutfits[1].style == WidgetStyle{},
+        "用户套装保留名称、形态及完整外观");
+  Check(legacy && legacy->presentation.style == WidgetStyle{} && legacy->widgetOutfits.empty(),
+        "旧配置加载经典款与默认尺寸，并从空套装库开始");
+  const auto damagedStyle = classtime::ParseConfig(
+      withTemplate + R"({"barStyle":"unknown","barThicknessDip":2,"barCornerDip":99,
+                         "ringDiameterDip":999,"screenEdgeInsetDip":-5,"trackColor":"bbAa09",
+                         "ringBackground":"invalid"},"widgetOutfits":[
+                        {"name":"","view":"ring","style":{}},
+                        {"name":"Valid","view":"ring","style":{"ringStyle":"instrument"}},
+                        {"name":"Valid","view":"bar","style":{}},
+                        {"name":"Bad data","view":"bar","style":false}]})", &error);
+  Check(damagedStyle && damagedStyle->presentation.style.barStyle == WidgetStyle::BarStyle::Classic &&
+            damagedStyle->presentation.style.barThicknessDip == WidgetStyle::kMinBarThickness &&
+            damagedStyle->presentation.style.barCornerDip == WidgetStyle::kMaxBarCorner &&
+            damagedStyle->presentation.style.ringDiameterDip == WidgetStyle::kMaxRingDiameter &&
+            damagedStyle->presentation.style.screenEdgeInsetDip == 0 &&
+            damagedStyle->presentation.style.colors.trackColor == "BBAA09" &&
+            damagedStyle->presentation.style.colors.ringBackground.empty(),
+        "外观字段独立回退与限制，保留有效色值");
+  Check(damagedStyle && damagedStyle->widgetOutfits.size() == 1 &&
+            damagedStyle->widgetOutfits[0].style.ringStyle == WidgetStyle::RingStyle::Instrument,
+        "无效和重复套装独立跳过");
+  Check(WidgetStyle{}.EffectiveBarThickness(false) == 32 && WidgetStyle{}.EffectiveBarThickness(true) == 34 &&
+            WidgetStyle{}.EffectiveBarCorner(false) == 16,
+        "经典长条保持原来的横竖厚度与圆角");
 
   bool fromOverride = false;
   const auto effective = classtime::EffectiveSegments(*parsed, now, &fromOverride);
@@ -836,6 +892,46 @@ void TestScreenEdgeTimeline(const classtime::Schedule& highSchool) {
         "边框前沿未到侧提供窄对比边且不溢出界外");
 }
 
+void TestScreenEdgeBandCorners() {
+  using namespace ClassTimeApp;
+  using Style = classtime::WidgetStyle::ScreenEdgeStyle;
+  const ScreenEdgeRect frame{-25, 37, 173, 107};
+  for (const auto style : {Style::DoubleRail, Style::SoftLine}) {
+    for (const int line : {4, 10, 24}) {
+      const auto strips = ScreenEdgeBandRects(frame, 0, line);
+      const auto bands = ScreenEdgeBands(style);
+      bool matches = true;
+      for (const auto& band : bands) {
+        const double start = std::round(band.start * line);
+        const double end = std::round(band.end * line);
+        const auto ring = ScreenEdgeBandRects(frame, start, end);
+        for (const auto& strip : strips) {
+          std::array<ScreenEdgeRect, 4> clipped;
+          std::transform(ring.begin(), ring.end(), clipped.begin(),
+              [&](const auto& part) { return IntersectScreenEdgeRects(part, strip); });
+          for (double y = strip.y + 0.5; y < strip.y + strip.height; ++y) {
+            for (double x = strip.x + 0.5; x < strip.x + strip.width; ++x) {
+              const double inset = std::min({x - frame.x, y - frame.y,
+                  frame.x + frame.width - x, frame.y + frame.height - y});
+              const auto copies = std::count_if(clipped.begin(), clipped.end(),
+                  [&](const auto& rect) {
+                    return x >= rect.x && x < rect.x + rect.width &&
+                           y >= rect.y && y < rect.y + rect.height;
+                  });
+              if (copies != (inset >= start && inset < end ? 1 : 0)) matches = false;
+            }
+          }
+        }
+      }
+      Check(matches, "边框分带跨过四角并保持每个像素只绘制一次");
+    }
+  }
+  Check(!PreviewWidgetExpanded(true, false, false), "实时预览尊重自动收起");
+  Check(PreviewWidgetExpanded(true, true, false), "实时预览可用悬停查看展开");
+  Check(PreviewWidgetExpanded(true, false, true), "示例可用键盘直接查看展开的组件");
+  Check(!PreviewWidgetExpanded(false, true, true), "未开启自动收起时不进入把手展开状态");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -867,6 +963,7 @@ int main(int argc, char** argv) {
   TestTemplateCreation(highSchool, university);
   TestConfigVersions(highSchool);
   TestTimelineDrag();
+  TestScreenEdgeBandCorners();
 
   std::printf("\n%d 项检查，%d 项失败\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;

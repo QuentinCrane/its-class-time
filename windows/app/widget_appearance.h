@@ -1,21 +1,33 @@
 #pragma once
 
 #include <winrt/Windows.UI.ViewManagement.h>
+#include "services.h"
 #include "widget_state.h"
 
 namespace ClassTimeApp::WidgetAppearance {
 
 using Edge = classtime::PresentationSettings::Edge;
-using winrt::Microsoft::UI::Xaml::CornerRadius;
+using Style = classtime::WidgetStyle;
+using namespace winrt::Microsoft::UI::Xaml;
+using namespace winrt::Microsoft::UI::Xaml::Controls;
 using namespace winrt::Microsoft::UI::Xaml::Media;
 using winrt::Windows::UI::Color;
 
 struct Palette {
-  Color background;
-  Color foreground;
-  Color accent;
-  Color rest;
-  Color lunch;
+  Color background{};
+  Color foreground{};
+  Color accent{};
+  Color rest{};
+  Color longRest{};
+  Color lunch{};
+  std::optional<Color> track;
+  bool highContrast = false;
+
+  bool operator==(const Palette& other) const {
+    return background == other.background && foreground == other.foreground &&
+           accent == other.accent && rest == other.rest && longRest == other.longRest &&
+           lunch == other.lunch && track == other.track && highContrast == other.highContrast;
+  }
 };
 
 inline Color WithAlpha(Color color, uint8_t alpha) {
@@ -39,6 +51,20 @@ inline Palette CurrentPalette() {
   using namespace winrt::Windows::UI;
   using namespace winrt::Windows::UI::ViewManagement;
   Palette palette;
+  HIGHCONTRASTW contrast{sizeof(contrast)};
+  if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
+      (contrast.dwFlags & HCF_HIGHCONTRASTON)) {
+    const auto systemColor = [](int id) {
+      const auto rgb = GetSysColor(id);
+      return ColorHelper::FromArgb(255, GetRValue(rgb), GetGValue(rgb), GetBValue(rgb));
+    };
+    palette.highContrast = true;
+    palette.background = systemColor(COLOR_WINDOW);
+    palette.foreground = systemColor(COLOR_WINDOWTEXT);
+    palette.accent = systemColor(COLOR_WINDOWTEXT);
+    palette.rest = palette.longRest = palette.lunch = palette.accent;
+    return palette;
+  }
   try {
     UISettings settings;
     palette.background = settings.GetColorValue(UIColorType::Background);
@@ -50,23 +76,66 @@ inline Palette CurrentPalette() {
     palette.accent = ColorHelper::FromArgb(255, 79, 107, 237);
   }
   palette.rest = ColorHelper::FromArgb(255, 63, 167, 150);
+  palette.longRest = palette.rest;
   palette.lunch = ColorHelper::FromArgb(255, 224, 164, 88);
   return palette;
 }
 
-inline Palette ResolvePalette(const classtime::PresentationSettings& presentation) {
+inline Palette ResolvePalette(const classtime::WidgetColors& colors) {
   Palette palette = CurrentPalette();
-  if (!presentation.focusColor.empty()) palette.accent = ParseHexColor(presentation.focusColor);
-  if (!presentation.restColor.empty()) palette.rest = ParseHexColor(presentation.restColor);
-  if (!presentation.lunchColor.empty()) palette.lunch = ParseHexColor(presentation.lunchColor);
+  if (palette.highContrast) return palette;
+  if (!colors.focusColor.empty()) palette.accent = ParseHexColor(colors.focusColor);
+  if (!colors.restColor.empty()) palette.rest = ParseHexColor(colors.restColor);
+  palette.longRest = colors.longRestColor.empty() ? palette.rest : ParseHexColor(colors.longRestColor);
+  if (!colors.lunchColor.empty()) palette.lunch = ParseHexColor(colors.lunchColor);
+  if (!colors.trackColor.empty()) palette.track = ParseHexColor(colors.trackColor);
   return palette;
+}
+
+inline Palette ResolvePalette(const classtime::PresentationSettings& presentation) {
+  return ResolvePalette(presentation.style.colors);
+}
+
+inline double RelativeLuminance(Color color) {
+  const auto linear = [](double channel) {
+    channel /= 255;
+    return channel <= 0.04045 ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * linear(color.R) + 0.7152 * linear(color.G) + 0.0722 * linear(color.B);
+}
+
+inline bool HasTextContrast(Color ink, Color background) {
+  const double a = RelativeLuminance(ink), b = RelativeLuminance(background);
+  return (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05) >= 4.5;
+}
+
+inline Color SurfaceColor(const Palette& palette, const std::string& hex) {
+  return palette.highContrast || hex.empty() ? palette.background : ParseHexColor(hex);
+}
+
+inline Color SurfaceInk(const Palette& palette, Color surface, const std::string& hex) {
+  if (palette.highContrast) return palette.foreground;
+  const auto ink = hex.empty() ? palette.foreground : ParseHexColor(hex);
+  if (HasTextContrast(ink, surface)) return ink;
+  return RelativeLuminance(surface) > 0.179
+      ? winrt::Windows::UI::ColorHelper::FromArgb(255, 0, 0, 0)
+      : winrt::Windows::UI::ColorHelper::FromArgb(255, 255, 255, 255);
+}
+
+inline Color TrackColor(const Palette& palette, Color tint, uint8_t alpha) {
+  if (palette.highContrast) return WithAlpha(palette.foreground, 110);
+  return palette.track.value_or(WithAlpha(tint, alpha));
+}
+
+inline Color EdgeTrackColor(const Palette& palette) {
+  return TrackColor(palette, winrt::Windows::UI::ColorHelper::FromArgb(255, 100, 117, 137), 172);
 }
 
 inline Color KindColor(const Palette& palette, classtime::SegmentKind kind) {
   switch (kind) {
     case classtime::SegmentKind::Focus: return palette.accent;
-    case classtime::SegmentKind::Break:
-    case classtime::SegmentKind::LongBreak: return palette.rest;
+    case classtime::SegmentKind::Break: return palette.rest;
+    case classtime::SegmentKind::LongBreak: return palette.longRest;
     case classtime::SegmentKind::Lunch: return palette.lunch;
   }
   return palette.accent;
@@ -74,7 +143,11 @@ inline Color KindColor(const Palette& palette, classtime::SegmentKind kind) {
 
 inline Color ScreenEdgeRunColor(const Palette& palette,
                                 std::optional<classtime::SegmentKind> kind, bool elapsed) {
-  if (!kind) return winrt::Windows::UI::ColorHelper::FromArgb(elapsed ? 172 : 80, 100, 117, 137);
+  if (!kind) {
+    auto color = EdgeTrackColor(palette);
+    if (!elapsed) color.A /= 2;
+    return color;
+  }
   auto color = KindColor(palette, *kind);
   color.A = elapsed ? 255 : 112;
   return color;
@@ -126,6 +199,237 @@ inline CornerRadius DockCorners(double radius, Edge edge, bool flush, double edg
 }
 
 inline Brush Surface(Color background) { return SolidColorBrush(background); }
+
+inline double BarSegmentThickness(const Style& style, classtime::SegmentKind kind, bool vertical) {
+  const bool shortBreak = kind == classtime::SegmentKind::Break;
+  switch (style.barStyle) {
+    case Style::BarStyle::Blocks:
+      return style.EffectiveBarThickness(vertical) * (shortBreak ? 0.39 : 0.63);
+    case Style::BarStyle::FineLine: return shortBreak ? 2.5 : 4.0;
+    default: return shortBreak ? 5.0 : 8.0;
+  }
+}
+
+inline double BarSegmentCorner(const Style& style, double length, double thickness) {
+  return std::min({length / 2, thickness / 2,
+                   style.barStyle == Style::BarStyle::Blocks ? 3.0 : thickness / 2});
+}
+
+inline constexpr double kRingFaceSize = Style::kDefaultRingDiameter;
+inline constexpr double kSquareRingCorner = 31;
+
+// Both the desktop and the settings preview use the same dial, labels, and progress path.
+class RingFace {
+ public:
+  Viewbox Element() {
+    if (viewbox_) return viewbox_;
+
+    Border body;
+    body.Width(kRingFaceSize);
+    body.Height(kRingFaceSize);
+    body_ = body;
+    Canvas canvas;
+    body.Child(canvas);
+    Append(canvas, bezel_);
+    Append(canvas, track_);
+    Append(canvas, ticks_);
+    Append(canvas, progress_);
+    progress_.StrokeStartLineCap(PenLineCap::Round);
+    progress_.StrokeEndLineCap(PenLineCap::Round);
+    progress_.StrokeLineJoin(PenLineJoin::Round);
+    track_.StrokeLineJoin(PenLineJoin::Round);
+    AddText(canvas, label_, 12, 43);
+    AddText(canvas, readout_, 32, 58);
+    readout_.FontFamily(FontFamily(L"Bahnschrift"));
+    readout_.FontWeight(winrt::Microsoft::UI::Text::FontWeights::SemiBold());
+    AddText(canvas, summary_, 11, 101);
+    viewbox_ = Viewbox();
+    viewbox_.Child(body);
+    return viewbox_;
+  }
+
+  void Update(const Style& style, const Palette& palette, Color accent, double fraction,
+              const std::wstring& label, const std::wstring& readout, const std::wstring& summary) {
+    Element();
+    UpdateChrome(style, palette);
+    if (!accentBrush_ || accentBrush_.Color() != accent) {
+      accentBrush_ = SolidColorBrush(accent);
+      progress_.Stroke(accentBrush_);
+    }
+    if (fraction != fraction_) {
+      fraction_ = fraction;
+      progress_.Visibility(fraction > 0 ? Visibility::Visible : Visibility::Collapsed);
+      if (fraction > 0) progress_.Points(Points(style.ringStyle, orbitRadius_, fraction));
+    }
+    if (label_.Text() != label) label_.Text(label);
+    if (summary_.Text() != summary) summary_.Text(summary);
+    if (readout_.Text() != readout) {
+      readout_.Text(readout);
+      readout_.FontSize(label.empty() ? 18 : (readout.size() > 5 ? 26 : 32));
+      Canvas::SetTop(readout_, label.empty() ? 66 : 58);
+    }
+  }
+
+ private:
+  template <typename Element>
+  static void Append(const Canvas& canvas, Element& child) {
+    child = Element();
+    canvas.Children().Append(child);
+  }
+
+  static void AddText(const Canvas& canvas, TextBlock& text, double size, double y) {
+    Append(canvas, text);
+    text.Width(kRingFaceSize);
+    text.TextAlignment(TextAlignment::Center);
+    text.FontSize(size);
+    // The complete dial scales together, including its readout.
+    text.IsTextScaleFactorEnabled(false);
+    Canvas::SetTop(text, y);
+  }
+
+  static winrt::Windows::Foundation::Point PointAt(Style::RingStyle style, double radius,
+                                                    double fraction) {
+    constexpr double pi = 3.14159265358979323846;
+    const bool instrument = style == Style::RingStyle::Instrument;
+    const double angle = (instrument ? 7 * pi / 6 : 0.0) +
+                         (instrument ? 5 * pi / 3 : 2 * pi) * fraction;
+    double x = std::sin(angle);
+    double y = -std::cos(angle);
+    if (style == Style::RingStyle::RoundedSquare) {
+      const double scale = std::pow(std::pow(x, 6) + std::pow(y, 6), -1.0 / 6);
+      x *= scale;
+      y *= scale;
+    }
+    return {static_cast<float>(kRingFaceSize / 2 + x * radius),
+            static_cast<float>(kRingFaceSize / 2 + y * radius)};
+  }
+
+  static PointCollection Points(Style::RingStyle style, double radius, double fraction) {
+    constexpr int steps = 96;
+    PointCollection points;
+    const int complete = static_cast<int>(std::floor(fraction * steps));
+    for (int i = 0; i <= complete; ++i) points.Append(PointAt(style, radius, i / double(steps)));
+    if (complete < fraction * steps) points.Append(PointAt(style, radius, fraction));
+    return points;
+  }
+
+  void UpdateChrome(const Style& style, const Palette& palette) {
+    const auto surface = SurfaceColor(palette, style.colors.ringBackground);
+    const auto ink = SurfaceInk(palette, surface, style.colors.inkColor);
+    const auto track = TrackColor(palette, ink, 32);
+    if (surface != surface_) {
+      surface_ = surface;
+      body_.Background(SolidColorBrush(surface));
+    }
+    if (ink != ink_ || palette.highContrast != highContrast_) {
+      highContrast_ = palette.highContrast;
+      ink_ = ink;
+      const auto text = SolidColorBrush(ink);
+      for (const auto& block : {label_, readout_, summary_}) block.Foreground(text);
+      const auto rule = SolidColorBrush(WithAlpha(ink, highContrast_ ? 255 : 38));
+      bezel_.BorderBrush(rule);
+      ticks_.Stroke(SolidColorBrush(WithAlpha(ink, highContrast_ ? 255 : 110)));
+    }
+    if (track != trackColor_) {
+      trackColor_ = track;
+      track_.Stroke(SolidColorBrush(track));
+    }
+    const double stroke = style.ringStrokeDip * kRingFaceSize / style.ringDiameterDip;
+    if (stroke == stroke_ && style.ringStyle == style_) return;
+    stroke_ = stroke;
+    style_ = style.ringStyle;
+    fraction_ = -1;
+    const bool square = style_ == Style::RingStyle::RoundedSquare;
+    const double corner = square ? kSquareRingCorner : kRingFaceSize / 2;
+    body_.CornerRadius({corner, corner, corner, corner});
+    bezel_.Width(kRingFaceSize - 7);
+    bezel_.Height(kRingFaceSize - 7);
+    bezel_.BorderThickness({1, 1, 1, 1});
+    const double bezelCorner = corner - 3.5;
+    bezel_.CornerRadius({bezelCorner, bezelCorner, bezelCorner, bezelCorner});
+    Canvas::SetLeft(bezel_, 3.5);
+    Canvas::SetTop(bezel_, 3.5);
+    orbitRadius_ = kRingFaceSize / 2 - std::max(square ? 15.0 : 13.0, stroke / 2 + 8);
+    if (style_ == Style::RingStyle::Instrument) orbitRadius_ -= 6;
+    track_.Points(Points(style_, orbitRadius_, 1));
+    track_.StrokeThickness(stroke);
+    progress_.StrokeThickness(stroke);
+    ticks_.Visibility(style_ == Style::RingStyle::Instrument ? Visibility::Visible
+                                                             : Visibility::Collapsed);
+    if (style_ == Style::RingStyle::Instrument) {
+      GeometryGroup ticks;
+      const double radius = (kRingFaceSize / 2) - 7.5;
+      for (int i = 0; i <= 30; ++i) {
+        LineGeometry tick;
+        tick.StartPoint(PointAt(style_, radius, i / 30.0));
+        tick.EndPoint(PointAt(style_, radius - (i % 5 == 0 ? 5 : 2.5), i / 30.0));
+        ticks.Children().Append(tick);
+      }
+      ticks_.Data(ticks);
+      ticks_.StrokeThickness(1.0);
+    }
+  }
+
+  Viewbox viewbox_{nullptr};
+  Border body_{nullptr};
+  Border bezel_{nullptr};
+  Shapes::Polyline track_{nullptr}, progress_{nullptr};
+  Shapes::Path ticks_{nullptr};
+  TextBlock label_{nullptr}, readout_{nullptr}, summary_{nullptr};
+  SolidColorBrush accentBrush_{nullptr};
+  Color surface_{}, ink_{}, trackColor_{};
+  Style::RingStyle style_ = Style::RingStyle::Classic;
+  bool highContrast_ = false;
+  double stroke_ = 0;
+  double orbitRadius_ = 0;
+  double fraction_ = -1;
+};
+
+inline void UpdateRingReadout(RingFace& face, const classtime::PresentationSettings& presentation,
+                              const Palette& palette, const WidgetState& state,
+                              const std::vector<classtime::Segment>& plan,
+                              const classtime::WallClock& now) {
+  std::wstring label, value, summary;
+  Color accent = palette.accent;
+  if (state.snapshot.current) {
+    const auto& current = *state.snapshot.current;
+    label = current.kind == classtime::SegmentKind::Focus
+        ? L"第 " + std::to_wstring(current.focusOrdinal) + L" 节" : SegmentKindLabel(current.kind);
+    accent = KindColor(palette, current.kind);
+    switch (presentation.style.ringReadout) {
+      case Style::RingReadout::Progress:
+        label += L"进度";
+        value = FormatPercent(state.snapshot.progress);
+        break;
+      case Style::RingReadout::EndTime:
+        label += L"结束于";
+        value = FormatClock(current.end);
+        break;
+      default: {
+        label += L"剩余";
+        const int remaining = (current.end.TotalMinutes() - now.MinutesSinceMidnight()) * 60 -
+                              now.second;
+        wchar_t digits[16]{};
+        swprintf_s(digits, L"%02d:%02d", (remaining % 3600) / 60, remaining % 60);
+        value = remaining >= 3600 ? std::to_wstring(remaining / 3600) + L":" + digits : digits;
+        break;
+      }
+    }
+  } else if (state.snapshot.next) {
+    const bool started = std::any_of(plan.begin(), plan.end(), [&now](const auto& segment) {
+      return segment.start.TotalMinutes() <= now.MinutesSinceMidnight();
+    });
+    label = started ? L"空档 · 下一段" : L"首段开始";
+    value = FormatClock(state.snapshot.next->start);
+  } else {
+    value = state.snapshot.hasSchedule ? L"今日已结束" : L"今天没有安排";
+  }
+  if (presentation.scope == classtime::PresentationSettings::Scope::AllDay && state.focusTotal > 0) {
+    summary = L"今日 " + std::to_wstring(state.focusCompleted) + L" / " +
+              std::to_wstring(state.focusTotal) + L" 节";
+  }
+  face.Update(presentation.style, palette, accent, state.snapshot.progress, label, value, summary);
+}
 
 // —— 自定义颜色（"RRGGBB" 十六进制，配置层已校验） ——
 
