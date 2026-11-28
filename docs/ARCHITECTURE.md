@@ -58,7 +58,7 @@ GitHub 单仓库（共享：需求/JSON Schema/预设/测试向量）
 - 最初计划使用官方 C++ WinUI 3 packaged 模板，以减少通知标识与部署配置的变量。
 - 开发机上的 `MSBuild.exe` 被安全策略禁用，于是工程改为**纯代码构建 + 解包运行**：
   `tools/build-unpackaged.cmd` 直接调用 `cl`/`link`，运行时由 Bootstrapper 初始化 Windows App Runtime。
-  这条路径让界面与引擎能被真实构建、截图核对，但通知注册、开机启动任务等打包相关能力只能留到打包后验证。
+  EXE 通过 Windows App SDK 注册即时通知，在用户开启登录启动时写入当前用户的 Run 项。MSIX 使用清单中的 StartupTask。
 - 对外分发暂用 **Inno Setup 离线安装包**（`tools/build-installer.ps1`），把应用、预设与
   Windows App Runtime 一起打包，目标机器可离线安装。当前安装包未签名。
 - `Package.appxmanifest` 与 MSIX 打包配置保留在仓库里，但**尚未构建验证**。不因为工程里存在清单就宣称支持 MSIX 发行。

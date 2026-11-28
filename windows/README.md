@@ -7,13 +7,13 @@
 
 | 部分 | 状态 | 说明 |
 |---|---|---|
-| 作息引擎 `engine/` | **已编译并测试** | 纯 C++17，无 WinRT 依赖；`engine_tests` 244 项检查全部通过（含 `shared/test-cases`、配置兼容性、时间轴拖动和组件状态，0 失败） |
+| 作息引擎 `engine/` | **已编译并测试** | 纯 C++17，无 WinRT 依赖；`engine_tests` 270 项检查全部通过（含 `shared/test-cases`、配置兼容性、时间轴拖动和组件状态，0 失败） |
 | 配置/今日覆盖/去重 | **已编译并测试** | JSON 往返、原子写入、失效覆盖清理、事件键去重 |
 | 悬浮层 `app/overlay_window.*` | **源码通过 + 实机渲染验证** | 分节长条/圆环/屏幕边框在解包模式实机渲染成功（截图核对）；四边吸附、左右竖向排列与状态配色为 2026-11-22 新增，待实机核对 |
 | 设置窗口 `app/settings_window.*` | **实机渲染验证** | 纯代码构建 UI；NavigationView、模板选择、星期勾选、时段列表、编辑浮层全部正常显示 |
 | 应用装配 `app/desktop_app.*` + `main.cpp` | **实机验证** | 解包模式启动稳定常驻；托盘图标出现；崩溃问题已修复（见 §2） |
 | 托盘 `app/tray_icon.*` | **部分验证** | 图标曾在系统托盘显示；WinUI 菜单及命令已在隔离实例验证，实际托盘右键入口和 explorer 重启重建待复核 |
-| 即时通知 `app/notification_service.*` | **源码通过，未实机验证** | `AppNotificationManager.Show` 需在实机核对授权与弹出 |
+| 即时通知 `app/notification_service.*` | **已安装版已投递到系统通知中心** | 已核对隐藏时投递、合并文案及暂停恢复；拒绝授权和勿扰横幅仍待实测 |
 | 边界等待 `app/boundary_monitor.*` | **源码通过，未实机验证** | 按最近边界睡眠 + 60 秒看门狗；睡眠唤醒场景待测 |
 | 离线安装包 `installer/` | **已构建并安装验证** | Inno Setup 7，含 Windows App Runtime 1.6.9；未签名，干净机待验 |
 | MSIX 打包 | **未验证** | 本机 MSBuild 被安全策略禁用；`tools/build-unpackaged.cmd` 提供无 MSBuild 构建路径 |
@@ -175,7 +175,7 @@ windows\build\engine\engine_tests.exe "E:\path\to\repo"
 - **悬浮窗**：`OverlappedPresenter` 去边框、`SetWindowPos(HWND_TOPMOST)`、`WS_EX_NOACTIVATE`；四边吸附，左右贴边切换为竖向分节。默认 `flushWithEdge=true`，贴边时 0 间距、靠边圆角削平并关闭 DWM 外框，可直接落在任务栏上沿；关闭后恢复 12 DIP 悬浮间距。不承诺覆盖独占全屏。
 - **多显示器**：在「显示与位置」选择指定显示器或跟随系统主显示器；只改变组件所在位置，不更改系统主屏。已保存的显示器不可用时，组件定位回退到系统主屏。
 - **单实例**：`AppInstance::FindOrRegisterForKey("ClassTime")`。
-- **开机启动**：清单中的 `ClassTimeStartup` 启动任务，默认关闭，由用户在设置页开启。
+- **开机启动**：EXE 在用户开启后将带引号的程序路径登记到当前用户的 Run 项，关闭后移除；卸载仅清理指向本安装路径的项。MSIX 使用清单中的 `ClassTimeStartup` 启动任务。
 
 ## 7. 手工验收（后续重点）
 
@@ -197,6 +197,6 @@ windows\build\engine\engine_tests.exe "E:\path\to\repo"
 
 - 四边吸附与左右竖向排列已接入，需要在 125%/150% 缩放下实机核对贴边位置、悬停卡方向与自动隐藏动画。
 - 悬浮窗贴边定位：config 可保存 `edge/offset`，实机核对贴底 offsetY 行为与拖动吸附细节（本轮未逐一交互验证）。
-- hover 详情、多显示器热插拔监听、通知实弹均待实机确认。
+- hover 详情与 Windows 到点合并通知已有桌面记录，多显示器热插拔仍待实机确认。
 - MSIX 打包、签名、CI 依赖可运行 MSBuild 的环境。
 - `XamlControlsResources` 纯代码加载是社区支持路径（issue #7606），正式 MSIX 构建后应复核默认样式完整性。
