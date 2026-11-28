@@ -2942,6 +2942,12 @@ void SettingsWindow::Build() {
     weekdayPanel_.Children().Append(box);
   }
 
+  window_.Activated([this](auto const&, WindowActivatedEventArgs const& args) {
+    if (args.WindowActivationState() != WindowActivationState::Deactivated &&
+        requestedSection_ == notificationsScroll_) {
+      RefreshNotificationPermission();
+    }
+  });
   nav_.SelectedItem(nav_.MenuItems().GetAt(0));
   RefreshAll();
 }
@@ -4297,7 +4303,15 @@ void SettingsWindow::RefreshNotificationControls() {
     }
   }
   SelectSegment(dropClockSkinGrid_, skinIndex);
-  const bool systemEnabled = QuerySystemNotificationsEnabled();
+  RefreshNotificationPermission();
+  syncing_ = previous;
+  RefreshAlertColorEditor();
+  RefreshVisualPreview();
+}
+
+void SettingsWindow::RefreshNotificationPermission() {
+  const auto& settings = Services::Instance().config().notifications;
+  const auto permission = QueryNotificationPermission();
   // 有效提醒 = 主开关开启 且 未暂停 且 系统允许投递；顶部一行写清楚。
   if (!settings.enabled) {
     notificationStateText_.Text(L"边界提醒已关闭");
@@ -4308,7 +4322,7 @@ void SettingsWindow::RefreshNotificationControls() {
     notificationStateText_.Foreground(
         ResourceBrush(L"SystemFillColorCautionBrush",
                       Windows::UI::ColorHelper::FromArgb(255, 157, 93, 0)));
-  } else if (!systemEnabled) {
+  } else if (!permission.enabled) {
     notificationStateText_.Text(L"系统通知未授权——请到系统设置允许 ClassTime 通知。");
     notificationStateText_.Foreground(
         ResourceBrush(L"SystemFillColorCriticalBrush",
@@ -4319,11 +4333,7 @@ void SettingsWindow::RefreshNotificationControls() {
         ResourceBrush(L"SystemFillColorSuccessBrush",
                       Windows::UI::ColorHelper::FromArgb(255, 15, 123, 15)));
   }
-  const std::wstring label = QueryNotificationPermissionLabel();
-  permissionValueText_.Text(hstring(label));
-  syncing_ = previous;
-  RefreshAlertColorEditor();
-  RefreshVisualPreview();
+  permissionValueText_.Text(permission.label);
 }
 
 void SettingsWindow::RefreshAlertColorEditor() {
@@ -5094,6 +5104,7 @@ void SettingsWindow::ShowSection(const std::wstring& tag) {
       RefreshTodayOverview();
     }
   } else if (selected == notificationsScroll_) {
+    RefreshNotificationPermission();
     RefreshVisualPreview();
   }
   if (selected == displayScroll_ && hwnd_ && IsWindowVisible(hwnd_)) StartPreviewRefresh();

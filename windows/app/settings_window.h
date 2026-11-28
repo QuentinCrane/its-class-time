@@ -65,6 +65,7 @@ class SettingsWindow {
   // 模板重命名防抖提交。
   void CommitTemplateName();
   void RefreshNotificationControls();
+  void RefreshNotificationPermission();
   void RefreshVisualPreview();
   void RefreshAlertColorEditor();
   void CommitAlertColors();

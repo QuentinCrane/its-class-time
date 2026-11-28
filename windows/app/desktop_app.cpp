@@ -114,11 +114,9 @@ void DesktopApp::Initialize() {
     if (dispatcher == nullptr) return;
     dispatcher.TryEnqueue([this, batch] {
       if (exiting_) return;
-      if (notifications_) notifications_->ShowBoundary(batch.events, batch.plan);
-      if (visualAlert_) {
-        if (const auto alert = ComposeBoundaryAlert(batch.events)) {
-          visualAlert_->Trigger(*alert);
-        }
+      const auto alert = ComposeBoundaryAlert(batch.events);
+      if (alert && notifications_ && notifications_->ShowBoundary(*alert) && visualAlert_) {
+        visualAlert_->Trigger(*alert);
       }
       ApplyState();
     });

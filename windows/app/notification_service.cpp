@@ -194,16 +194,12 @@ void NotificationService::Unregister() {
   registered_ = false;
 }
 
-bool NotificationService::ShowBoundary(const std::vector<classtime::BoundaryEvent>& events,
-                                       const std::vector<classtime::Segment>& plan) {
-  (void)plan;
-  if (!registered_) return false;
-  const auto message = Compose(events);
-  if (!message.has_value()) return false;
+bool NotificationService::ShowBoundary(const BoundaryAlert& alert) {
+  if (!registered_ || !QueryNotificationPermission().enabled) return false;
   try {
     AppNotificationBuilder builder;
-    builder.AddText(message->title);
-    builder.AddText(message->body);
+    builder.AddText(alert.title);
+    builder.AddText(alert.body);
     const auto notification = builder.BuildNotification();
     AppNotificationManager::Default().Show(notification);
     return true;
@@ -212,62 +208,29 @@ bool NotificationService::ShowBoundary(const std::vector<classtime::BoundaryEven
   }
 }
 
-bool NotificationService::ShowTest() {
-  if (!registered_) return false;
-  try {
-    AppNotificationBuilder builder;
-    builder.AddText(L"通知正常");
-    builder.AddText(L"到边界时，会像这样提醒你");
-    AppNotificationManager::Default().Show(builder.BuildNotification());
-    return true;
-  } catch (...) {
-    return false;
-  }
-}
-
-std::wstring NotificationService::PermissionLabel() const {
+NotificationPermission QueryNotificationPermission() {
   try {
     switch (AppNotificationManager::Default().Setting()) {
       case AppNotificationSetting::Enabled:
-        return L"系统通知已允许";
+        return {true, L"系统通知已允许"};
       case AppNotificationSetting::DisabledForApplication:
-        return L"系统已关闭本应用的通知";
+        return {false, L"系统已关闭本应用的通知"};
       case AppNotificationSetting::DisabledForUser:
-        return L"系统通知当前被用户关闭";
+        return {false, L"系统通知当前被用户关闭"};
       case AppNotificationSetting::DisabledByGroupPolicy:
-        return L"通知被组织策略关闭";
+        return {false, L"通知被组织策略关闭"};
       case AppNotificationSetting::DisabledByManifest:
-        return L"应用清单未声明通知能力";
+        return {false, L"应用清单未声明通知能力"};
       default:
-        return L"通知状态未知";
+        return {false, L"通知状态未知"};
     }
   } catch (...) {
-    return L"尚未注册通知";
-  }
-}
-
-bool NotificationService::SystemNotificationsEnabled() const {
-  try {
-    return AppNotificationManager::Default().Setting() == AppNotificationSetting::Enabled;
-  } catch (...) {
-    return false;
-  }
-}
-
-std::wstring QueryNotificationPermissionLabel() {
-  NotificationService service;
-  return service.PermissionLabel();
-}
-
-bool QuerySystemNotificationsEnabled() {
-  try {
-    return AppNotificationManager::Default().Setting() == AppNotificationSetting::Enabled;
-  } catch (...) {
-    return false;
+    return {false, L"尚未注册通知"};
   }
 }
 
 bool ShowTestSystemNotification() {
+  if (!QueryNotificationPermission().enabled) return false;
   try {
     AppNotificationBuilder builder;
     builder.AddText(L"通知正常");

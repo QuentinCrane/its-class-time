@@ -21,23 +21,18 @@ class NotificationService {
   void Register(std::function<void()> onActivated);
   void Unregister();
 
-  // 返回是否真正发送（可能被开关/权限/合并规则过滤）。
-  bool ShowBoundary(const std::vector<classtime::BoundaryEvent>& events,
-                    const std::vector<classtime::Segment>& plan);
-
-  bool ShowTest();
-
-  // 系统通知权限状态（用于设置页提示）。
-  std::wstring PermissionLabel() const;
-  bool SystemNotificationsEnabled() const;
+  bool ShowBoundary(const BoundaryAlert& alert);
 
  private:
   bool registered_ = false;
 };
 
 // 设置页直接查询/测试系统通知，无需持有服务实例。
-std::wstring QueryNotificationPermissionLabel();
-bool QuerySystemNotificationsEnabled();
+struct NotificationPermission {
+  bool enabled;
+  const wchar_t* label;
+};
+NotificationPermission QueryNotificationPermission();
 bool ShowTestSystemNotification();
 
 }  // namespace ClassTimeApp
