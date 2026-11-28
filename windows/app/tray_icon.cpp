@@ -29,8 +29,9 @@ bool TrayIcon::Create(HINSTANCE instance, CommandHandler handler) {
   windowClass.lpszClassName = kWindowClass;
   RegisterClassExW(&windowClass);
 
-  window_ = CreateWindowExW(0, kWindowClass, L"ClassTime", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
-                            instance_, this);
+  // TaskbarCreated, power and clock changes are broadcast to top-level windows.
+  window_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kWindowClass, L"ClassTime",
+                            WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, instance_, this);
   if (window_ == nullptr) return false;
 
   icon_ = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(IDI_CLASSTIME), IMAGE_ICON,
@@ -111,6 +112,12 @@ LRESULT TrayIcon::HandleMessage(UINT message, WPARAM wparam, LPARAM lparam) {
     // 资源管理器重启后重建图标。
     AddIcon();
     return 0;
+  }
+  if (message == WM_TIMECHANGE ||
+      (message == WM_POWERBROADCAST && (wparam == PBT_APMRESUMEAUTOMATIC ||
+                                        wparam == PBT_APMRESUMESUSPEND))) {
+    if (handler_) handler_(kTrayClockChanged);
+    return TRUE;
   }
   if (message == kCallbackMessage) {
     switch (LOWORD(lparam)) {

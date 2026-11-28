@@ -44,17 +44,17 @@ void DesktopApp::OnLaunched(LaunchActivatedEventArgs const&) {
   const auto instance =
       Microsoft::Windows::AppLifecycle::AppInstance::FindOrRegisterForKey(L"ClassTime");
   if (!instance.IsCurrent()) {
-    try {
-      instance
-          .RedirectActivationToAsync(
-              Microsoft::Windows::AppLifecycle::AppInstance::GetCurrent().GetActivatedEventArgs())
-          .get();
-    } catch (...) {
-    }
-    Application::Current().Exit();
+    auto redirect = instance.RedirectActivationToAsync(
+        Microsoft::Windows::AppLifecycle::AppInstance::GetCurrent().GetActivatedEventArgs());
+    redirect.Completed([dispatcher = dispatcher_](auto const&, auto) {
+      dispatcher.TryEnqueue([] { Application::Current().Exit(); });
+    });
     return;
   }
 
+  activation_ = instance.Activated(winrt::auto_revoke, [this](auto const&, auto const&) {
+    dispatcher_.TryEnqueue([this] { if (!exiting_) ShowSettings(); });
+  });
   Initialize();
 }
 
@@ -198,6 +198,9 @@ void DesktopApp::HandleTrayCommand(UINT command) {
     case kTrayToggleMute:
       services.SetMuted(!services.config().notifications.muted);
       break;
+    case kTrayClockChanged:
+      services.Refresh();
+      break;
     case kTrayOpenSettings:
       ShowSettings();
       break;
@@ -212,6 +215,7 @@ void DesktopApp::HandleTrayCommand(UINT command) {
 void DesktopApp::ExitApplication() {
   if (exiting_) return;
   exiting_ = true;
+  activation_.revoke();
   Services::Instance().SetChangeCallback(nullptr);
   if (monitor_) {
     monitor_->Stop();

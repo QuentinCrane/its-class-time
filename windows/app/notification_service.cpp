@@ -172,13 +172,13 @@ std::optional<BoundaryAlert> ComposeBoundaryAlert(
 void NotificationService::Register(std::function<void()> onActivated) {
   try {
     auto manager = AppNotificationManager::Default();
-    manager.Register();
     if (onActivated) {
       manager.NotificationInvoked(
           [callback = std::move(onActivated)](auto const&, AppNotificationActivatedEventArgs const&) {
             if (callback) callback();
           });
     }
+    manager.Register();
     registered_ = true;
   } catch (...) {
     registered_ = false;

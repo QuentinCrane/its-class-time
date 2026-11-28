@@ -15,6 +15,7 @@ enum TrayCommand : UINT {
   kTrayOpenSettings = 106,
   kTrayExit = 107,
   kTrayScreenEdgeView = 108,
+  kTrayClockChanged = 109,
 };
 
 class TrayIcon {

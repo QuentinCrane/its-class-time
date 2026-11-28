@@ -5,6 +5,7 @@
 #pragma once
 
 #include <winrt/Microsoft.UI.Xaml.h>
+#include <winrt/Microsoft.Windows.AppLifecycle.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Microsoft.UI.Xaml.XamlTypeInfo.h>
 
@@ -53,6 +54,7 @@ struct DesktopApp
   std::unique_ptr<NotificationService> notifications_;
   std::unique_ptr<VisualAlert> visualAlert_;
   winrt::Microsoft::UI::Dispatching::DispatcherQueue dispatcher_{nullptr};
+  winrt::Microsoft::Windows::AppLifecycle::AppInstance::Activated_revoker activation_;
   bool exiting_ = false;
 };
 
