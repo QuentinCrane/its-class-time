@@ -30,7 +30,7 @@ REM Put NuGet CppWinRT projections before the SDK's older ones, or Microsoft.UI.
 set "INCLUDE=%CPPWINRT%\include;%ROOT%\Generated Files;%INCLUDE%"
 
 set "INC=/I"%ROOT%" /I"%ROOT%\app" /I"%ROOT%\engine\include" /I"%CPPWINRT%\include" /I"%PKG%\include" /I"%ROOT%\Generated Files""
-set "CFLAGS=/nologo /O2 /Zi /std:c++17 /EHsc /utf-8 /bigobj /W3 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN"
+set "CFLAGS=/nologo /O1 /Gw /Zi /Fd"%OBJDIR%\ClassTimeCompile.pdb" /std:c++17 /EHsc /utf-8 /bigobj /W3 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN"
 
 if not exist "%OBJDIR%" mkdir "%OBJDIR%"
 
@@ -49,13 +49,13 @@ for %%f in (config.cpp edit_ops.cpp json.cpp schedule.cpp time_engine.cpp) do (
 rc /nologo /fo "%OBJDIR%\ClassTime.res" /I "%ROOT%" "%ROOT%\ClassTime.rc" || exit /b 1
 
 echo [4/4] link
-link /nologo /OUT:"%EXE%" /MACHINE:X64 /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTINPUT:"%ROOT%\app.manifest" ^
+link /nologo /OPT:REF,ICF /OUT:"%EXE%" /MACHINE:X64 /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTINPUT:"%ROOT%\app.manifest" ^
   "%OBJDIR%\pch.obj" "%OBJDIR%\main.obj" "%OBJDIR%\desktop_app.obj" "%OBJDIR%\settings_window.obj" ^
   "%OBJDIR%\boundary_monitor.obj" "%OBJDIR%\notification_service.obj" "%OBJDIR%\overlay_window.obj" ^
   "%OBJDIR%\services.obj" "%OBJDIR%\tray_icon.obj" "%OBJDIR%\visual_alert.obj" "%OBJDIR%\config.obj" "%OBJDIR%\edit_ops.obj" ^
   "%OBJDIR%\json.obj" "%OBJDIR%\schedule.obj" "%OBJDIR%\time_engine.obj" "%OBJDIR%\ClassTime.res" ^
   "%PKG%\lib\win10-x64\Microsoft.WindowsAppRuntime.Bootstrap.lib" ^
-  windowsapp.lib user32.lib gdi32.lib shell32.lib dwmapi.lib d2d1.lib dwrite.lib advapi32.lib ole32.lib oleaut32.lib uuid.lib kernel32.lib || exit /b 1
+  windowsapp.lib windowscodecs.lib user32.lib gdi32.lib shell32.lib dwmapi.lib d2d1.lib dwrite.lib advapi32.lib ole32.lib oleaut32.lib uuid.lib kernel32.lib || exit /b 1
 
 echo BUILD OK: %EXE%
 exit /b 0

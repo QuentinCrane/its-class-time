@@ -42,6 +42,8 @@ class VisualAlert {
 
   void StartClock(const BoundaryAlert& alert, const RECT& area, double dpiScale);
   void TickClock();
+  void SetClockHovered(bool hovered);
+  void UpdateClockHoldTimer();
   void BeginClockRetract();
   void StopClock();
   bool EnsureClockResources(int pxWidth, int pxHeight, double dpiScale);

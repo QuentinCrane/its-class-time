@@ -8,6 +8,8 @@ using namespace winrt::Microsoft::UI::Xaml;
 using namespace winrt::Microsoft::UI::Xaml::Media;
 using namespace winrt::Microsoft::UI::Xaml::Media::Animation;
 
+inline constexpr int kPaneEnterMs = 300;
+
 inline bool Enabled() {
   BOOL enabled = FALSE;
   return SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0) && enabled;
@@ -19,18 +21,12 @@ inline void Stop(Storyboard& storyboard) {
 
 inline void Animate(const Storyboard& storyboard, const DependencyObject& target,
                     const wchar_t* property, double from, double to, int milliseconds,
-                    const EasingFunctionBase& easing, bool changesLayout = false,
-                    int delayMilliseconds = 0) {
+                    const EasingFunctionBase& easing) {
   DoubleAnimation animation;
   animation.From(from);
   animation.To(to);
   animation.Duration(DurationHelper::FromTimeSpan(std::chrono::milliseconds(milliseconds)));
   animation.EasingFunction(easing);
-  animation.EnableDependentAnimation(changesLayout);
-  if (delayMilliseconds > 0) {
-    animation.BeginTime(winrt::box_value(winrt::Windows::Foundation::TimeSpan(std::chrono::milliseconds(delayMilliseconds)))
-                            .as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::TimeSpan>>());
-  }
   Storyboard::SetTarget(animation, target);
   Storyboard::SetTargetProperty(animation, property);
   storyboard.Children().Append(animation);
@@ -62,7 +58,7 @@ inline Pose ReadPose(const FrameworkElement& surface, const FrameworkElement& co
 }
 
 inline Storyboard Slide(const FrameworkElement& surface, const FrameworkElement& content,
-                        Pose from, Pose to, int milliseconds, bool spring = false) {
+                        Pose from, Pose to, int milliseconds) {
   TranslateTransform offset;
   offset.X(from.x);
   offset.Y(from.y);
@@ -72,18 +68,10 @@ inline Storyboard Slide(const FrameworkElement& surface, const FrameworkElement&
   SineEase fade;
   fade.EasingMode(EasingMode::EaseInOut);
   Animate(storyboard, surface, L"Opacity", from.opacity, to.opacity, milliseconds, fade);
-  if (spring) {
-    BackEase movement;
-    movement.Amplitude(0.25);
-    movement.EasingMode(EasingMode::EaseOut);
-    Animate(storyboard, offset, L"X", from.x, to.x, milliseconds, movement);
-    Animate(storyboard, offset, L"Y", from.y, to.y, milliseconds, movement);
-  } else {
-    CubicEase movement;
-    movement.EasingMode(to.opacity == 0 ? EasingMode::EaseIn : EasingMode::EaseOut);
-    Animate(storyboard, offset, L"X", from.x, to.x, milliseconds, movement);
-    Animate(storyboard, offset, L"Y", from.y, to.y, milliseconds, movement);
-  }
+  CubicEase movement;
+  movement.EasingMode(EasingMode::EaseOut);
+  Animate(storyboard, offset, L"X", from.x, to.x, milliseconds, movement);
+  Animate(storyboard, offset, L"Y", from.y, to.y, milliseconds, movement);
   return storyboard;
 }
 

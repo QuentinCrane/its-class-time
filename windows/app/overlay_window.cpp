@@ -738,7 +738,7 @@ void OverlayWindow::AnimateDetail(bool show) {
   detailCard_.RenderTransform(scale);
   detailCard_.Opacity(opacity);
   detailMotion_ = Storyboard();
-  const int duration = show ? 190 : 145;
+  const int duration = show ? 260 : 210;
   SineEase fade;
   fade.EasingMode(EasingMode::EaseInOut);
   Motion::Animate(detailMotion_, detailCard_, L"Opacity", opacity, show ? 1 : 0, duration, fade);
@@ -1005,14 +1005,14 @@ void OverlayWindow::SnapTo(POINT target, RECT workArea) {
   const auto started = std::chrono::steady_clock::now();
   const bool horizontal = IsSideEdge(edge_);
   const double distance = horizontal ? target.x - bounds.left : target.y - bounds.top;
-  const double overshoot = std::min(18.0 * dpiScale_, 0.08 * std::abs(distance));
+  const double overshoot = std::min(8.0 * dpiScale_, 0.035 * std::abs(distance));
   const double direction = distance >= 0 ? 1.0 : -1.0;
   lastSnapPosition_ = {bounds.left, bounds.top};
   snapFrame_ = CompositionTarget::Rendering(
       [this, move, target, bounds, workArea, started, overshoot, direction,
        horizontal](auto const&, auto const&) {
     const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - started)
-                         .count() / 0.30;
+                         .count() / 0.40;
     if (t >= 1.0) {
       StopSnap();
       move(target);
@@ -1077,8 +1077,8 @@ void OverlayWindow::AnimateWindowRect(const RECT& target, Layer outgoing) {
   const double dy = (target.top + height / 2.0) - (from.top + oldHeight / 2.0);
   const double distance = std::max(std::abs(dx), std::abs(dy));
   const auto duration = std::chrono::milliseconds(
-      static_cast<int>(std::clamp(265.0 + distance / 5, 265.0, 430.0)));
-  const double recoil = std::min(0.022, 12 * dpiScale_ / std::max(1.0, distance));
+      static_cast<int>(std::clamp(330.0 + distance / 4, 330.0, 540.0)));
+  const double recoil = std::min(0.012, 8 * dpiScale_ / std::max(1.0, distance));
   const double outgoingOpacity = root_.Opacity();
   MONITORINFO monitor{sizeof(monitor)};
   if (!GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &monitor)) {
@@ -1167,7 +1167,7 @@ void OverlayWindow::AnimateScreenEdge(bool entering) {
           auto const&, auto const&) mutable {
     const auto now = std::chrono::steady_clock::now();
     if (started.time_since_epoch().count() == 0) started = now;
-    const double t = std::chrono::duration<double>(now - started).count() / 0.26;
+    const double t = std::chrono::duration<double>(now - started).count() / 0.34;
     const double fade = Motion::SmoothStep(t);
     root_.Opacity(Motion::Mix(widgetFrom, entering ? 0.0 : 1.0, fade));
     stripAlpha_ = static_cast<int>(std::lround(Motion::Mix(edgeFrom, entering ? 255 : 0, fade)));
@@ -1213,7 +1213,7 @@ void OverlayWindow::SetEdgeCollapsed(bool collapsed, bool animate) {
     const auto from = Motion::ReadPose(root_, EdgeContent());
     ResetEdgeMotion();
     if (useMotion) {
-      edgeMotion_ = Motion::Slide(root_, EdgeContent(), from, {}, 145);
+      edgeMotion_ = Motion::Slide(root_, EdgeContent(), from, {}, 210);
       edgeMotion_.Begin();
     }
     return;
@@ -1227,7 +1227,7 @@ void OverlayWindow::SetEdgeCollapsed(bool collapsed, bool animate) {
     const POINT shift = EdgeShift(edge_, 6);
     edgeMotion_ = Motion::Slide(root_, EdgeContent(), from,
                                {0, static_cast<double>(shift.y), static_cast<double>(shift.x)},
-                               145);
+                               210);
     edgeMotion_.Completed([this](auto const& sender, auto const&) {
       if (sender != edgeMotion_) return;
       POINT cursor{};
@@ -1251,7 +1251,7 @@ void OverlayWindow::ApplyEdgeCollapsed(bool collapsed, bool fade) {
     const POINT shift = EdgeShift(edge_, collapsed ? 0 : 5);
     edgeMotion_ = Motion::Slide(root_, EdgeContent(), {0, static_cast<double>(shift.y),
                                                        static_cast<double>(shift.x)},
-                               {}, collapsed ? 105 : 170);
+                               {}, collapsed ? 155 : 240);
   }
   UpdateVisibleLayer();
   LayoutWindow();
@@ -1898,7 +1898,7 @@ void OverlayWindow::RenderStrips(int alpha) {
 }
 
 double OverlayWindow::CurrentHighlightPhase() {
-  constexpr double kCycleMs = 1800.0;
+  constexpr double kCycleMs = 2350.0;
   const auto now = std::chrono::steady_clock::now();
   if (highlightEpoch_.time_since_epoch().count() == 0) highlightEpoch_ = now;
   const double elapsedMs =

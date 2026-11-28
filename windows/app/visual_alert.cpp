@@ -591,22 +591,29 @@ void VisualAlert::StartFlash(const BoundaryAlert& alert, const RECT& area, doubl
   flashStart_ = std::chrono::steady_clock::now();
   if (!flashTimer_ && dispatcher_) {
     flashTimer_ = dispatcher_.CreateTimer();
-    flashTimer_.IsRepeating(true);
-    flashTimer_.Interval(std::chrono::milliseconds(16));
-    flashTimer_.Tick([this](auto const&, auto const&) { TickFlash(); });
+    flashTimer_.Tick([this](auto const&, auto const&) {
+      if (flashAnimated_) TickFlash();
+      else StopFlash();
+    });
   }
+  if (!flashTimer_) {
+    StopFlash();
+    return;
+  }
+  flashTimer_.IsRepeating(flashAnimated_);
+  flashTimer_.Interval(std::chrono::milliseconds(flashAnimated_ ? 16 : 1200));
   TickFlash();
   for (auto& strip : flashStrips_) {
     if (strip.hwnd) ShowWindow(strip.hwnd, SW_SHOWNOACTIVATE);
   }
-  if (flashTimer_) flashTimer_.Start();
+  flashTimer_.Start();
 }
 
 void VisualAlert::TickFlash() {
   const double elapsedMs = std::chrono::duration<double, std::milli>(
                                std::chrono::steady_clock::now() - flashStart_)
                                .count();
-  const double durationMs = flashAnimated_ ? 2600.0 : 1200.0;
+  const double durationMs = flashAnimated_ ? 3000.0 : 1200.0;
   if (elapsedMs >= durationMs) {
     StopFlash();
     return;
@@ -818,13 +825,22 @@ void VisualAlert::StartClock(const BoundaryAlert& alert, const RECT& area, doubl
 
   if (!clockTimer_ && dispatcher_) {
     clockTimer_ = dispatcher_.CreateTimer();
-    clockTimer_.IsRepeating(true);
-    clockTimer_.Interval(std::chrono::milliseconds(16));
     clockTimer_.Tick([this](auto const&, auto const&) { TickClock(); });
   }
-  TickClock();
+  if (!clockTimer_) {
+    StopClock();
+    return;
+  }
+  if (clockAnimated_) {
+    clockTimer_.IsRepeating(true);
+    clockTimer_.Interval(std::chrono::milliseconds(16));
+    TickClock();
+    clockTimer_.Start();
+  } else {
+    RenderClockFrame(0, 0, 1, 0, 1, 1, 1);
+    UpdateClockHoldTimer();
+  }
   if (clockHwnd_) ShowWindow(clockHwnd_, SW_SHOWNOACTIVATE);
-  if (clockTimer_) clockTimer_.Start();
 }
 
 void VisualAlert::RenderClockFrame(double rotXDeg, double rotYDeg, double scale, double dropDip,
@@ -1294,6 +1310,10 @@ void VisualAlert::RenderClockFrame(double rotXDeg, double rotYDeg, double scale,
 
 void VisualAlert::TickClock() {
   if (!clockHwnd_ || clockPhase_ == ClockPhase::Idle) return;
+  if (clockPhase_ == ClockPhase::Hold) {
+    UpdateClockHoldTimer();
+    return;
+  }
   const auto now = std::chrono::steady_clock::now();
   const double elapsedMs =
       std::chrono::duration<double, std::milli>(now - clockPhaseStart_).count();
@@ -1309,65 +1329,31 @@ void VisualAlert::TickClock() {
   double sweepProgress = 1.0;
   double opacity = 1.0;
 
-  if (!clockAnimated_) {
-    rotX = 0.0;
-    rotY = 0.0;
-    const auto dt = now - clockPhaseStart_;
-    clockPhaseStart_ = now;
-    if (!clockHovered_) {
-      clockHoldElapsed_ += dt;
-      if (clockHoldElapsed_ >= clockHoldDuration_) {
-        StopClock();
-        return;
-      }
-    }
-    if (clockFaceDirty_) {
-      RenderClockFrame(rotX, rotY, scale, dropDip, flipProgress, sweepProgress, opacity);
-    }
-    return;
-  }
-
   if (clockPhase_ == ClockPhase::Intro) {
-    constexpr double kIntroMs = 980.0;
+    constexpr double kIntroMs = 1150.0;
     const double t = std::clamp(elapsedMs / kIntroMs, 0.0, 1.0);
-    const double dropT = EaseOutBack(std::clamp(elapsedMs / 680.0, 0.0, 1.0));
-    const double tiltT = EaseOutCubic(std::clamp(elapsedMs / 760.0, 0.0, 1.0));
+    const double dropT = EaseOutBack(std::clamp(t / 0.72, 0.0, 1.0));
+    const double tiltT = EaseOutCubic(std::clamp(t / 0.78, 0.0, 1.0));
     dropDip = -88.0 * (1.0 - dropT);
     scale = 0.48 + 0.52 * dropT;
-    rotX = -46.0 + (42.0 * tiltT) + 6.0 * std::sin(kPi * std::clamp(elapsedMs / 700.0, 0.0, 1.0));
+    rotX = -46.0 + (42.0 * tiltT) + 6.0 * std::sin(kPi * std::clamp(t / 0.73, 0.0, 1.0));
     rotY = baseRotY * (1.45 - 1.10 * tiltT);
-    opacity = std::clamp(elapsedMs / 180.0, 0.0, 1.0);
-    flipProgress = std::clamp((elapsedMs - 340.0) / 560.0, 0.0, 1.0);
-    sweepProgress = std::clamp((elapsedMs - 240.0) / 720.0, 0.0, 1.0);
+    opacity = std::clamp(t / 0.20, 0.0, 1.0);
+    flipProgress = std::clamp((t - 0.35) / 0.60, 0.0, 1.0);
+    sweepProgress = std::clamp((t - 0.25) / 0.75, 0.0, 1.0);
     retractStartRotX_ = rotX;
     retractStartRotY_ = rotY;
     retractStartScale_ = scale;
     retractStartDropDip_ = dropDip;
     if (t >= 1.0) {
+      RenderClockFrame(rotX, rotY, scale, dropDip, flipProgress, sweepProgress, opacity);
       clockPhase_ = ClockPhase::Hold;
-      clockPhaseStart_ = now;
-      clockHoldElapsed_ = {};
-    }
-  } else if (clockPhase_ == ClockPhase::Hold) {
-    if (!clockHovered_) {
-      clockHoldElapsed_ += now - clockPhaseStart_;
-    }
-    clockPhaseStart_ = now;
-    const double totalHoldMs =
-        std::chrono::duration<double, std::milli>(clockHoldElapsed_).count();
-    const double sway = std::sin(totalHoldMs * 0.0018);
-    rotX = -4.0 + 2.5 * sway;
-    rotY = baseRotY * 0.35 + 4.5 * std::cos(totalHoldMs * 0.0014);
-    retractStartRotX_ = rotX;
-    retractStartRotY_ = rotY;
-    retractStartScale_ = scale;
-    retractStartDropDip_ = dropDip;
-    if (!clockHovered_ && clockHoldElapsed_ >= clockHoldDuration_) {
-      BeginClockRetract();
+      clockPhaseStart_ = std::chrono::steady_clock::now();
+      UpdateClockHoldTimer();
       return;
     }
   } else if (clockPhase_ == ClockPhase::Retract) {
-    constexpr double kRetractMs = 520.0;
+    constexpr double kRetractMs = 680.0;
     const double t = EaseInCubic(std::clamp(elapsedMs / kRetractMs, 0.0, 1.0));
     rotX = retractStartRotX_ - 34.0 * t;
     rotY = retractStartRotY_ + baseRotY * 0.65 * t;
@@ -1383,14 +1369,42 @@ void VisualAlert::TickClock() {
   RenderClockFrame(rotX, rotY, scale, dropDip, flipProgress, sweepProgress, opacity);
 }
 
+void VisualAlert::SetClockHovered(bool hovered) {
+  if (clockHovered_ == hovered) return;
+  if (clockPhase_ == ClockPhase::Hold) {
+    const auto now = std::chrono::steady_clock::now();
+    if (!clockHovered_) clockHoldElapsed_ += now - clockPhaseStart_;
+    clockPhaseStart_ = now;
+  }
+  clockHovered_ = hovered;
+  if (clockPhase_ == ClockPhase::Hold) UpdateClockHoldTimer();
+}
+
+void VisualAlert::UpdateClockHoldTimer() {
+  clockTimer_.Stop();
+  if (clockHovered_) return;
+  const auto elapsed = clockHoldElapsed_ + (std::chrono::steady_clock::now() - clockPhaseStart_);
+  if (elapsed >= clockHoldDuration_) {
+    BeginClockRetract();
+    return;
+  }
+  clockTimer_.IsRepeating(false);
+  clockTimer_.Interval(std::chrono::ceil<std::chrono::milliseconds>(clockHoldDuration_ - elapsed));
+  clockTimer_.Start();
+}
+
 void VisualAlert::BeginClockRetract() {
   if (clockPhase_ == ClockPhase::Idle || clockPhase_ == ClockPhase::Retract) return;
-  if (!clockAnimated_) {
+  if (!clockAnimated_ || !Motion::Enabled()) {
     StopClock();
     return;
   }
+  clockTimer_.Stop();
   clockPhase_ = ClockPhase::Retract;
   clockPhaseStart_ = std::chrono::steady_clock::now();
+  clockTimer_.IsRepeating(true);
+  clockTimer_.Interval(std::chrono::milliseconds(16));
+  clockTimer_.Start();
 }
 
 void VisualAlert::StopClock() {
@@ -1419,7 +1433,7 @@ LRESULT CALLBACK VisualAlert::ClockWndProc(HWND hwnd, UINT msg, WPARAM wParam, L
       return MA_NOACTIVATE;
     case WM_MOUSEMOVE:
       if (self) {
-        self->clockHovered_ = true;
+        self->SetClockHovered(true);
         if (!self->clockTrackingMouse_) {
           TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
           TrackMouseEvent(&tme);
@@ -1429,8 +1443,8 @@ LRESULT CALLBACK VisualAlert::ClockWndProc(HWND hwnd, UINT msg, WPARAM wParam, L
       return 0;
     case WM_MOUSELEAVE:
       if (self) {
-        self->clockHovered_ = false;
         self->clockTrackingMouse_ = false;
+        self->SetClockHovered(false);
       }
       return 0;
     case WM_LBUTTONUP:

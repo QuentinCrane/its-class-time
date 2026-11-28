@@ -24,19 +24,21 @@ std::string ReadAllBytes(const std::filesystem::path& path) {
 }
 
 bool WriteAtomic(const std::filesystem::path& path, const std::string& content) {
+  if (ReadAllBytes(path) == content) return true;
+
   std::error_code ec;
   std::filesystem::create_directories(path.parent_path(), ec);
   const std::filesystem::path temporary = path.wstring() + L".tmp";
-  {
-    std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-    if (!stream) return false;
-    stream.write(content.data(), static_cast<std::streamsize>(content.size()));
-    stream.flush();
-    if (!stream) return false;
+  std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+  if (!stream) return false;
+  stream.write(content.data(), static_cast<std::streamsize>(content.size()));
+  stream.close();
+  if (stream && MoveFileExW(temporary.c_str(), path.c_str(),
+                            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    return true;
   }
-  // 原子替换，避免断电/崩溃留下半份配置。
-  return MoveFileExW(temporary.c_str(), path.c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+  std::filesystem::remove(temporary, ec);
+  return false;
 }
 
 bool BackupCorrupt(const std::filesystem::path& path) {
@@ -138,8 +140,10 @@ bool Services::Initialize() {
     config_.revision = 1;
   }
 
+  const auto overrideCount = config_.dailyOverrides.size();
   classtime::PruneOverrides(config_, todayKey());
-  classtime::BumpRevision(config_);
+  // A restart with the same plan keeps both the revision and the persisted notification keys.
+  if (!loaded || config_.dailyOverrides.size() != overrideCount) classtime::BumpRevision(config_);
   RecomputeLocked();
   if (!PersistConfig()) return false;
   initialized_ = true;
@@ -312,21 +316,34 @@ bool Services::SelectTemplate(const std::string& templateId, std::string* error)
   return true;
 }
 
-void Services::SetActiveWeekdays(const std::vector<int>& weekdays) {
+bool Services::SetActiveWeekdays(const std::vector<int>& weekdays, std::string* error) {
+  auto days = weekdays;
+  std::sort(days.begin(), days.end());
+  days.erase(std::unique(days.begin(), days.end()), days.end());
   {
     std::lock_guard<std::mutex> guard(mutex_);
-    classtime::Schedule* schedule = classtime::FindTemplateMutable(config_, config_.selectedTemplateId);
-    if (schedule == nullptr) return;
-    schedule->activeWeekdays = weekdays;
-    std::sort(schedule->activeWeekdays.begin(), schedule->activeWeekdays.end());
-    schedule->activeWeekdays.erase(
-        std::unique(schedule->activeWeekdays.begin(), schedule->activeWeekdays.end()),
-        schedule->activeWeekdays.end());
-    classtime::BumpRevision(config_);
-    PersistConfig();
+    auto next = config_;
+    auto* schedule = classtime::FindTemplateMutable(next, next.selectedTemplateId);
+    if (!schedule) {
+      if (error) *error = "找不到当前模板";
+      return false;
+    }
+    if (schedule->activeWeekdays == days) return true;
+    schedule->activeWeekdays = std::move(days);
+    if (!classtime::ValidateSchedule(*schedule, nullptr)) {
+      if (error) *error = "无法应用所选星期，请检查模板的时段和重复设置";
+      return false;
+    }
+    classtime::BumpRevision(next);
+    if (!WriteAtomic(configPath(), classtime::SerializeConfig(next))) {
+      if (error) *error = "无法保存重复星期，请检查配置文件夹的写入权限";
+      return false;
+    }
+    config_ = std::move(next);
     RecomputeLocked();
   }
   NotifyChanged();
+  return true;
 }
 
 void Services::RenameTemplate(const std::string& templateId, const std::string& name) {

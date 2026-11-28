@@ -114,9 +114,9 @@
 
 *圆环视图：中心是本节剩余时间，底部是今日已完成的节数。*
 
-![Windows 显示与位置设置](assets/screenshots/windows-display-settings.png)
+![Windows 作息计划设置](assets/screenshots/windows-schedule-settings.png)
 
-*早期版本的显示设置截图；当前页面已调整为突出实时预览的布局。*
+*作息计划设置。可在同一页选重复星期、点开起止时间调整时段。*
 
 ## 装上试试
 

@@ -56,7 +56,7 @@ class Services {
   bool AddTemplate(const std::string& name, bool copyCurrent, std::string* error);
 
   // 修改当前模板的生效星期。
-  void SetActiveWeekdays(const std::vector<int>& weekdays);
+  bool SetActiveWeekdays(const std::vector<int>& weekdays, std::string* error = nullptr);
 
   // 重命名当前模板（空名称忽略）。
   void RenameTemplate(const std::string& templateId, const std::string& name);

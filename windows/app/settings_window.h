@@ -21,6 +21,10 @@ class SettingsWindow {
   void ApplyState(bool presentationOnly = false);
 
  private:
+  enum class SettingsPage {
+    Schedule, Timeline, Timetable, Templates, Display, Appearance, Notifications, VisualAlerts, General
+  };
+
   // 作息时间轴拖动模式与时段块视觉。
   struct TimelineBlock {
     winrt::Microsoft::UI::Xaml::Controls::Border host{nullptr};
@@ -34,7 +38,23 @@ class SettingsWindow {
   };
 
   void Build();
-  void RefreshAll();
+  winrt::Microsoft::UI::Xaml::Controls::StackPanel MakePage(
+      winrt::Microsoft::UI::Xaml::Controls::ScrollViewer& scroll);
+  void BuildScheduleContext();
+  void BuildSchedulePage();
+  void BuildWeekdayControls(const winrt::Microsoft::UI::Xaml::Controls::StackPanel& page);
+  void BuildTimelinePage();
+  void BuildTimetablePage();
+  void BuildTemplatesPage();
+  void BuildDisplayPage();
+  void BuildAppearancePage();
+  void BuildDisplayPreview();
+  void BuildNotificationPage();
+  void BuildVisualAlertsPage();
+  void BuildGeneralPage();
+  void BuildEditor();
+  winrt::Microsoft::UI::Xaml::Controls::StackPanel BuildTimeline();
+  void RefreshCurrentPage();
   void RefreshTemplates();
   void RefreshWeekdays();
   void RefreshSegments();
@@ -52,11 +72,12 @@ class SettingsWindow {
   double TimelineX(int minute) const;
   int TimelineMinute(double x) const;
   void RefreshDisplayControls();
+  void RefreshAppearanceControls();
   void RefreshDisplayMonitors();
   void RefreshDisplayPreview(const classtime::PresentationSettings& presentation);
   void StartPreviewRefresh();
   void StopPreviewRefresh();
-  void ApplyDisplayPanelVisibility(bool screenEdge, bool animate);
+  void ReleasePreviewResources();
   void CommitScreenEdgeThickness();
   // 长条长度/背景色：拖动期间只更新预览，停顿后合并保存。
   void CommitBarLength();
@@ -67,14 +88,18 @@ class SettingsWindow {
   void CommitTemplateName();
   void RefreshNotificationControls();
   void RefreshNotificationPermission();
+  void RefreshVisualAlertControls();
   void RefreshVisualPreview();
   void RefreshAlertColorEditor();
   void CommitAlertColors();
   void RefreshGeneralControls();
   void ChangeLoginStartup(bool enable);
-  void ShowSection(const std::wstring& tag);
-  void RevealSection();
+  void ShowSection(SettingsPage page, const winrt::hstring& title);
+  void RevealSection(const winrt::Microsoft::UI::Xaml::Controls::ScrollViewer& selected);
+  bool ShowsScheduleContext() const;
+  bool ShowsDisplayPreview() const;
   void CommitWeekdays();
+  void SaveWeekdays(const std::vector<int>& weekdays);
 
   void OpenEditor(const classtime::Segment& segment);
   void OpenNewEditor();
@@ -160,10 +185,17 @@ class SettingsWindow {
 
   winrt::Microsoft::UI::Xaml::Controls::NavigationView nav_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid rootGrid_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock pageTitle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer scheduleScroll_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ScrollViewer timelinePageScroll_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ScrollViewer timetablePageScroll_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ScrollViewer templatesScroll_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer displayScroll_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ScrollViewer appearanceScroll_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer notificationsScroll_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::ScrollViewer visualAlertsScroll_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer generalScroll_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::StackPanel scheduleContext_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ComboBox templateCombo_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock templateStatus_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Button restorePresetButton_{nullptr};
@@ -174,8 +206,10 @@ class SettingsWindow {
   std::wstring pendingTemplateName_;
   std::string pendingTemplateId_;
   winrt::Microsoft::UI::Xaml::Controls::RadioButtons planScope_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::VariableSizedWrapGrid weekdayPanel_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Border weekdayCard_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid weekdayPanel_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer timetableScroll_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock timetableEmpty_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel segmentList_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid viewSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid scopeSegments_{nullptr};
@@ -183,6 +217,7 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ComboBox monitorCombo_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock monitorHint_{nullptr};
   std::wstring monitorListSignature_;
+  winrt::Microsoft::UI::Xaml::Controls::Border displayPreviewHost_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Canvas displayPreview_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Canvas previewDetail_{nullptr};
   // 预览分三层：静态模拟屏幕 + 两层交替承载控件外观，切换形式时交叉淡入淡出。
@@ -201,13 +236,9 @@ class SettingsWindow {
   PreviewAppearance previewAppearance_[2];
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard previewMotion_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard previewHighlightMotion_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::Grid displayOptionsHost_{nullptr};
-  winrt::Microsoft::UI::Xaml::Media::RectangleGeometry displayOptionsClip_{nullptr};
-  winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard displayPanelMotion_{nullptr};
-  std::optional<bool> displayPanelScreenEdge_;
   winrt::Microsoft::UI::Xaml::Controls::StackPanel dockControls_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel dockBehavior_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::StackPanel screenEdgeControls_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Border screenEdgeAppearanceGroup_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel screenEdgeColorPanel_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid screenEdgeColorSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid screenEdgeGradientRow_{nullptr};
@@ -218,12 +249,11 @@ class SettingsWindow {
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer thicknessTimer_{nullptr};
   std::optional<int> pendingThickness_;
   // 长条长度（仅分节长条视图可见）与背景色。
-  winrt::Microsoft::UI::Xaml::Controls::StackPanel barLengthPanel_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Border barAppearanceGroup_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Slider barLengthSlider_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock barLengthValue_{nullptr};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer barLengthTimer_{nullptr};
   std::optional<int> pendingBarLength_;
-  winrt::Microsoft::UI::Xaml::Controls::StackPanel barColorPanel_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch barBackgroundToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ColorPicker barColorPicker_{nullptr};
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer barColorTimer_{nullptr};
@@ -236,7 +266,6 @@ class SettingsWindow {
   winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer phaseColorTimer_{nullptr};
   int phaseColorTarget_ = 0;
   std::array<std::optional<std::string>, 3> pendingPhaseColors_{};
-  std::array<std::string, 3> lastSchedulePhaseColors_{};
   bool previewHovered_ = false;
   winrt::Microsoft::UI::Xaml::Controls::Button reanchorButton_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch visibleToggle_{nullptr};
@@ -251,7 +280,7 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch lunchToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch screenEdgeFlashToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch dropClockToggle_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::StackPanel dropClockOptionsPanel_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Border dropClockOptionsCard_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid dropClockStyleSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid dropClockScaleSegments_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Grid dropClockHoldSegments_{nullptr};
@@ -271,10 +300,9 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch startupToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock versionText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock configPathText_{nullptr};
-  // 作息计划：顶栏状态徽标、非阻断提示与今日概览。
+  // 作息设置：共用反馈与今日概览。
   winrt::Microsoft::UI::Xaml::Controls::InfoBar scheduleNotice_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::TextBlock scheduleNowText_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::TextBlock scheduleDateText_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock scheduleSummary_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::StackPanel todayOverview_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::Button clearTodayButton_{nullptr};
   // 作息时间轴：类剪辑软件的水平刻度条，拖动调整时段。
@@ -309,7 +337,7 @@ class SettingsWindow {
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard editorMotion_{nullptr};
   winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard sectionMotion_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ScrollViewer activeSection_{nullptr};
-  winrt::Microsoft::UI::Xaml::Controls::ScrollViewer requestedSection_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::Grid pagesHost_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock editorTitle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBox editorName_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ComboBox editorKind_{nullptr};
