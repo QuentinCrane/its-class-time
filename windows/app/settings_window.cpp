@@ -2,6 +2,7 @@
 #include "settings_window.h"
 
 #include "notification_service.h"
+#include "login_startup.h"
 #include "resource.h"
 #include "services.h"
 #include "ui_motion.h"
@@ -2168,6 +2169,9 @@ void SettingsWindow::Build() {
     Add(windowStack, MakeCardTitle(L"启动与窗口"));
     startupToggle_ = ToggleSwitch();
     Add(windowStack, MakeToggleRow(startupToggle_, L"登录时自动启动"));
+    startupStatus_ = MakeSubtitle(L"");
+    startupStatus_.Visibility(Visibility::Collapsed);
+    Add(windowStack, startupStatus_);
     Add(windowStack,
         MakeSubtitle(L"关闭设置窗口时应用继续后台运行，提醒照常；托盘图标可重新打开设置或退出程序。"));
     windowCard.Child(windowStack);
@@ -2809,26 +2813,7 @@ void SettingsWindow::Build() {
   });
 
   startupToggle_.Toggled([this](auto const&, auto const&) {
-    if (syncing_) return;
-    const bool want = startupToggle_.IsOn();
-    bool applied = false;
-    try {
-      auto task = Windows::ApplicationModel::StartupTask::GetAsync(L"ClassTimeStartup").get();
-      if (want) {
-        const auto state = task.RequestEnableAsync().get();
-        applied = state == Windows::ApplicationModel::StartupTaskState::Enabled ||
-                  state == Windows::ApplicationModel::StartupTaskState::EnabledByPolicy;
-      } else {
-        task.Disable();
-        applied = true;
-      }
-    } catch (...) {
-      applied = false;
-    }
-    syncing_ = true;
-    startupToggle_.IsOn(want && applied);
-    syncing_ = false;
-    Services::Instance().SetLaunchAtLogin(want && applied);
+    if (!syncing_) ChangeLoginStartup(startupToggle_.IsOn());
   });
 
   editorOverlay_.KeyDown([this](auto const&, Input::KeyRoutedEventArgs const& args) {
@@ -4760,8 +4745,38 @@ void SettingsWindow::RefreshVisualPreview() {
   }
 }
 
+void SettingsWindow::ChangeLoginStartup(bool enable) {
+  startupToggle_.IsEnabled(false);
+  bool applied = false;
+  bool registered = Services::Instance().config().launchAtLogin;
+  try {
+    if (LoginStartup::IsUnpackaged()) {
+      applied = LoginStartup::SetRegistered(enable);
+      registered = LoginStartup::Registered();
+    } else {
+      auto task = Windows::ApplicationModel::StartupTask::GetAsync(L"ClassTimeStartup").get();
+      if (enable) task.RequestEnableAsync().get();
+      else task.Disable();
+      const auto state = task.State();
+      using State = Windows::ApplicationModel::StartupTaskState;
+      registered = state == State::Enabled || state == State::EnabledByPolicy;
+      applied = registered == enable;
+    }
+  } catch (const winrt::hresult_error&) {
+    applied = false;
+  }
+  const bool previous = std::exchange(syncing_, true);
+  startupToggle_.IsOn(registered);
+  syncing_ = previous;
+  startupToggle_.IsEnabled(true);
+  startupStatus_.Text(applied ? L"" : L"无法更改登录启动项，请检查 Windows 的启动应用设置。");
+  startupStatus_.Visibility(applied ? Visibility::Collapsed : Visibility::Visible);
+  Services::Instance().SetLaunchAtLogin(registered);
+}
+
 void SettingsWindow::RefreshGeneralControls() {
-  startupToggle_.IsOn(Services::Instance().config().launchAtLogin);
+  startupToggle_.IsOn(LoginStartup::IsUnpackaged() ? LoginStartup::Registered()
+                                                   : Services::Instance().config().launchAtLogin);
   versionText_.Text(hstring(L"版本 " + std::wstring(kVersion)));
   const std::wstring path = Services::Instance().dataDirectory().wstring();
   configPathText_.Text(hstring(L"配置文件夹：" + path));

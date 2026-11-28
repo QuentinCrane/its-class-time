@@ -150,3 +150,17 @@ begin
     RuntimePage.Hide;
   end;
 end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Command: String;
+  RunKey: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    RunKey := 'Software\Microsoft\Windows\CurrentVersion\Run';
+    if RegQueryStringValue(HKCU, RunKey, 'ClassTime.Desktop', Command) and
+       (CompareText(Command, '"' + ExpandConstant('{app}\ClassTimeApp.exe') + '"') = 0) then
+      RegDeleteValue(HKCU, RunKey, 'ClassTime.Desktop');
+  end;
+end;

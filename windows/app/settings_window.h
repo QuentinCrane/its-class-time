@@ -69,6 +69,7 @@ class SettingsWindow {
   void RefreshAlertColorEditor();
   void CommitAlertColors();
   void RefreshGeneralControls();
+  void ChangeLoginStartup(bool enable);
   void ShowSection(const std::wstring& tag);
   void RevealSection();
   void CommitWeekdays();
@@ -264,6 +265,7 @@ class SettingsWindow {
   int alertColorTarget_ = 0;
   std::array<std::optional<std::string>, 5> pendingAlertColors_{};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock visualTestResultText_{nullptr};
+  winrt::Microsoft::UI::Xaml::Controls::TextBlock startupStatus_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch startupToggle_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock versionText_{nullptr};
   winrt::Microsoft::UI::Xaml::Controls::TextBlock configPathText_{nullptr};
